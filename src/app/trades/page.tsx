@@ -278,7 +278,7 @@ export default function TradesPage() {
           </table>
           {trades.length === 0 && (
             <div className="text-center py-8 text-gray-500">
-              暂无交易记录，点击"添加交易"开始记录吧！
+              暂无交易记录，点击&ldquo;添加交易&rdquo;开始记录吧！
             </div>
           )}
         </div>

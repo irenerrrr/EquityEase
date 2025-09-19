@@ -7,18 +7,18 @@ import { useRouter } from 'next/navigation'
 interface FundAccount {
   id: string
   name: string
-  amount: number
-  is_active: boolean
   created_at: string
+  equity?: number // 账户净值（可选，从快照表获取）
 }
 
 export default function AccountsPage() {
   const [loading, setLoading] = useState(true)
   const [accounts, setAccounts] = useState<FundAccount[]>([])
   const [showAddForm, setShowAddForm] = useState(false)
+  const [currentAccountId, setCurrentAccountId] = useState<string | null>(null)
   const [formData, setFormData] = useState({
     name: '',
-    amount: 0
+    amount: ''
   })
 
   const router = useRouter()
@@ -37,66 +37,267 @@ export default function AccountsPage() {
     checkUser()
   }, [router])
 
+  // 当账号列表加载完成后，设置当前账号
+  useEffect(() => {
+    if (accounts.length > 0 && !currentAccountId) {
+      // 尝试从 localStorage 恢复上次选择的账号
+      const savedAccountId = localStorage.getItem('currentAccountId')
+      if (savedAccountId && accounts.find(acc => acc.id === savedAccountId)) {
+        setCurrentAccountId(savedAccountId)
+      } else {
+        // 如果没有保存的账号或账号不存在，默认选择第一个
+        setCurrentAccountId(accounts[0].id)
+        localStorage.setItem('currentAccountId', accounts[0].id)
+      }
+    }
+  }, [accounts, currentAccountId])
+
   const fetchAccounts = async () => {
     try {
-      // 这里暂时使用模拟数据，后续可以连接真实的数据库
-      // const { data, error } = await supabase.from('fund_accounts').select('*')
-      
-      // 模拟数据
-      const mockAccounts: FundAccount[] = []
-      setAccounts(mockAccounts)
+      // 获取当前用户
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) {
+        setLoading(false)
+        return
+      }
+
+      // 从 Supabase 获取用户的账号列表
+      const { data: accountsData, error } = await supabase
+        .from('accounts')
+        .select('*')
+        .eq('UUID', user.id)
+        .order('created_at', { ascending: false })
+
+      if (error) {
+        console.error('获取账号列表失败:', error)
+        setLoading(false)
+        return
+      }
+
+      // 获取每个账号的最新净值
+      const formattedAccounts: FundAccount[] = await Promise.all(
+        accountsData.map(async (account) => {
+          // 获取该账号的最新快照
+          const { data: latestSnapshot } = await supabase
+            .from('account_snapshots_daily')
+            .select('equity')
+            .eq('account_id', account.id)
+            .order('as_of_date', { ascending: false })
+            .limit(1)
+            .single()
+
+          return {
+            id: account.id,
+            name: account.name,
+            created_at: account.created_at,
+            equity: latestSnapshot?.equity || 0
+          }
+        })
+      )
+
+      setAccounts(formattedAccounts)
+      setLoading(false)
     } catch (error) {
       console.error('获取账号列表失败:', error)
+      setLoading(false)
     }
   }
 
   const handleAddAccount = async (e: React.FormEvent) => {
     e.preventDefault()
     
+    console.log('创建账号表单提交:', formData)
+    
     if (!formData.name.trim()) {
+      alert('请输入账号名称')
+      return
+    }
+
+    const amount = parseFloat(formData.amount) || 0
+    if (amount < 0) {
+      alert('初始金额不能为负数')
       return
     }
 
     try {
-      // 这里添加创建账号的逻辑
+      // 获取当前用户
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) {
+        console.error('用户未登录')
+        return
+      }
+
+      // 插入到 Supabase accounts 表
+      const { data: insertedAccount, error } = await supabase
+        .from('accounts')
+        .insert([
+          {
+            UUID: user.id, // 关联用户 UUID
+            name: formData.name
+          }
+        ])
+        .select()
+        .single()
+
+      if (error) {
+        console.error('创建账号失败:', error)
+        alert(`创建账号失败: ${error.message}`)
+        return
+      }
+
+      console.log('账号创建成功:', insertedAccount)
+
+      // 同时在 account_snapshots_daily 表中创建初始快照
+      const today = new Date().toISOString().split('T')[0] // 获取今天的日期 (YYYY-MM-DD)
+      const { error: snapshotError } = await supabase
+        .from('account_snapshots_daily')
+        .insert([
+          {
+            account_id: insertedAccount.id, // 绑定账号 ID
+            as_of_date: today, // 设置当前日期
+            equity: amount, // 总权益等于输入的金额
+            cash: amount, // 现金等于输入的金额
+            market_value: 0, // 初始市值为 0
+            realized_pnl_to_date: 0 // 初始已实现盈亏为 0
+          }
+        ])
+
+      if (snapshotError) {
+        console.error('创建账号快照失败:', snapshotError)
+        alert(`创建账号快照失败: ${snapshotError.message}`)
+        // 注意：这里我们不返回，因为账号已经创建成功了
+        // 只是快照创建失败，用户仍然可以使用账号
+      } else {
+        console.log('账号快照创建成功')
+      }
+
+      // 更新本地状态
       const newAccount: FundAccount = {
-        id: Date.now().toString(),
-        name: formData.name,
-        amount: formData.amount,
-        is_active: accounts.length === 0, // 如果是第一个账号，自动设为活跃
-        created_at: new Date().toISOString()
+        id: insertedAccount.id,
+        name: insertedAccount.name,
+        created_at: insertedAccount.created_at,
+        equity: amount // 新账号的净值等于初始金额
       }
       
-      setAccounts([...accounts, newAccount])
-      setFormData({ name: '', amount: 0 })
+      const updatedAccounts = [...accounts, newAccount]
+      setAccounts(updatedAccounts)
+      
+      // 如果这是第一个账号，自动设为当前账号
+      if (accounts.length === 0) {
+        console.log('创建第一个账号，设置为当前账号:', newAccount.id)
+        setCurrentAccountId(newAccount.id)
+        localStorage.setItem('currentAccountId', newAccount.id)
+        
+        // 延迟触发事件，确保状态更新完成
+        setTimeout(() => {
+          console.log('触发账号切换事件:', newAccount.id)
+          // 触发账号列表更新事件
+          window.dispatchEvent(new CustomEvent('accountsUpdated'))
+          // 触发账号切换事件
+          window.dispatchEvent(new CustomEvent('accountSwitched', {
+            detail: { accountId: newAccount.id }
+          }))
+        }, 100)
+      }
+      
+      setFormData({ name: '', amount: '' })
       setShowAddForm(false)
     } catch (error) {
       console.error('创建账号失败:', error)
+      alert(`创建账号时发生错误: ${error instanceof Error ? error.message : '未知错误'}`)
     }
   }
 
   const handleSwitchAccount = (accountId: string) => {
-    // 更新账号状态
-    setAccounts(accounts.map(account => ({
-      ...account,
-      is_active: account.id === accountId
-    })))
+    // 纯前端操作：更新当前账号ID
+    setCurrentAccountId(accountId)
+    localStorage.setItem('currentAccountId', accountId)
     
-    // 切换成功后跳转到仪表板
-    router.push('/dashboard')
+    // 触发自定义事件，通知 Header 组件更新
+    window.dispatchEvent(new CustomEvent('accountSwitched', {
+      detail: { accountId }
+    }))
+    
+    // 只做局部刷新，不跳转页面
   }
 
-  const handleDeleteAccount = (accountId: string) => {
+  const handleDeleteAccount = async (accountId: string) => {
+    console.log('开始删除账号:', accountId)
+    
     if (window.confirm('确定要删除这个账号吗？此操作不可撤销。')) {
-      const accountToDelete = accounts.find(acc => acc.id === accountId)
-      const remainingAccounts = accounts.filter(account => account.id !== accountId)
-      
-      // 如果删除的是当前活跃账号，且还有其他账号，则激活第一个账号
-      if (accountToDelete?.is_active && remainingAccounts.length > 0) {
-        remainingAccounts[0].is_active = true
+      try {
+        // 获取当前用户
+        const { data: { user } } = await supabase.auth.getUser()
+        if (!user) {
+          console.error('用户未登录')
+          alert('用户未登录')
+          return
+        }
+
+        console.log('用户已登录，开始删除账号:', accountId)
+
+        // 先删除相关的快照记录
+        console.log('删除账号快照记录...')
+        const { error: snapshotError } = await supabase
+          .from('account_snapshots_daily')
+          .delete()
+          .eq('account_id', accountId)
+
+        if (snapshotError) {
+          console.error('删除账号快照失败:', snapshotError)
+          alert(`删除账号快照失败: ${snapshotError.message}`)
+          return
+        }
+
+        console.log('账号快照删除成功')
+
+        // 再删除账号记录
+        console.log('删除账号记录...')
+        const { error: accountError } = await supabase
+          .from('accounts')
+          .delete()
+          .eq('id', accountId)
+          .eq('UUID', user.id)
+
+        if (accountError) {
+          console.error('删除账号失败:', accountError)
+          alert(`删除账号失败: ${accountError.message}`)
+          return
+        }
+
+        console.log('账号删除成功')
+
+        // 更新本地状态
+        const remainingAccounts = accounts.filter(account => account.id !== accountId)
+        setAccounts(remainingAccounts)
+        
+        // 如果删除的是当前选中的账号，需要切换到其他账号
+        if (currentAccountId === accountId) {
+          if (remainingAccounts.length > 0) {
+            // 切换到第一个剩余账号
+            const newCurrentId = remainingAccounts[0].id
+            setCurrentAccountId(newCurrentId)
+            localStorage.setItem('currentAccountId', newCurrentId)
+            
+            // 触发自定义事件，通知 Header 组件更新
+            window.dispatchEvent(new CustomEvent('accountSwitched', {
+              detail: { accountId: newCurrentId }
+            }))
+          } else {
+            // 没有剩余账号了
+            setCurrentAccountId(null)
+            localStorage.removeItem('currentAccountId')
+            
+            // 触发自定义事件，通知 Header 组件更新
+            window.dispatchEvent(new CustomEvent('accountSwitched', {
+              detail: { accountId: null }
+            }))
+          }
+        }
+      } catch (error) {
+        console.error('删除账号失败:', error)
+        alert(`删除账号时发生错误: ${error instanceof Error ? error.message : '未知错误'}`)
       }
-      
-      setAccounts(remainingAccounts)
     }
   }
 
@@ -141,36 +342,34 @@ export default function AccountsPage() {
             {accounts.map((account) => (
               <div key={account.id} className="px-6 py-4 hover:bg-gray-50 transition-colors">
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center space-x-4">
+                  <div className="flex items-center space-x-4 flex-1">
                     <div 
                       className="w-12 h-12 rounded-full flex items-center justify-center text-white font-bold"
                       style={{ backgroundColor: '#78ae78' }}
                     >
                       {account.name.charAt(0).toUpperCase()}
                     </div>
-                    <div>
-                      <div className="flex items-center space-x-2">
-                        <h4 className="font-medium text-gray-900">{account.name}</h4>
-                        {account.is_active && (
-                          <span className="px-2 py-1 text-xs bg-green-100 text-green-800 rounded-full">
-                            当前使用
-                          </span>
-                        )}
-                      </div>
-                      <p className="text-lg font-semibold text-gray-900 mt-1">
-                        ¥{account.amount.toLocaleString()}
-                      </p>
-                      <p className="text-xs text-gray-400 mt-1">
-                        创建时间: {new Date(account.created_at).toLocaleString()}
-                      </p>
+                    <div className="flex items-center space-x-4">
+                      <h4 className="font-medium text-gray-900">{account.name}</h4>
+                      {currentAccountId === account.id && (
+                        <span className="px-2 py-1 text-xs bg-green-100 text-green-800 rounded-full">
+                          当前使用
+                        </span>
+                      )}
+                      <span className="text-sm font-medium text-gray-700">
+                        账户净值：${account.equity?.toLocaleString() || '0'}
+                      </span>
                     </div>
                   </div>
                   
                   <div className="flex items-center space-x-3">
-                    {!account.is_active && (
+                    {currentAccountId !== account.id && (
                       <button
                         onClick={() => handleSwitchAccount(account.id)}
-                        className="px-3 py-1 text-sm text-blue-600 hover:text-blue-800 border border-blue-300 hover:border-blue-400 rounded-md transition-colors"
+                        className="px-3 py-1 text-sm text-white rounded-md transition-colors"
+                        style={{ backgroundColor: '#78ae78' }}
+                        onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#6a9d6a'}
+                        onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#78ae78'}
                       >
                         切换使用
                       </button>
@@ -245,7 +444,7 @@ export default function AccountsPage() {
                      className="block w-full pl-7 pr-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 bg-white [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                     placeholder="0.00"
                     value={formData.amount}
-                    onChange={(e) => setFormData({...formData, amount: parseFloat(e.target.value) || 0})}
+                    onChange={(e) => setFormData({...formData, amount: e.target.value})}
                   />
                 </div>
               </div>
@@ -253,10 +452,10 @@ export default function AccountsPage() {
               <div className="flex justify-end space-x-3">
                 <button
                   type="button"
-                  onClick={() => {
-                    setShowAddForm(false)
-                    setFormData({ name: '', amount: 0 })
-                  }}
+                 onClick={() => {
+                   setShowAddForm(false)
+                   setFormData({ name: '', amount: '' })
+                 }}
                   className="bg-gray-300 hover:bg-gray-400 text-black font-bold py-2 px-4 rounded transition-colors"
                 >
                   取消

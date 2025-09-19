@@ -3,9 +3,50 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
+import {
+  Chart as ChartJS,
+  CategoryScale,
+  LinearScale,
+  ArcElement,
+  Title,
+  Tooltip,
+  Legend,
+} from 'chart.js'
+import { Doughnut } from 'react-chartjs-2'
+
+ChartJS.register(
+  CategoryScale,
+  LinearScale,
+  ArcElement,
+  Title,
+  Tooltip,
+  Legend
+)
+
+interface AssetData {
+  equity: number
+  market_value: number
+  cash: number
+}
+
+interface DashboardStats {
+  totalAssets: number
+  todayPnL: number
+  cumulativePnL: number
+  todayPnLPercentage: number
+  cumulativePnLPercentage: number
+}
 
 export default function DashboardPage() {
   const [loading, setLoading] = useState(true)
+  const [assetData, setAssetData] = useState<AssetData>({ equity: 0, market_value: 0, cash: 0 })
+  const [stats, setStats] = useState<DashboardStats>({
+    totalAssets: 0,
+    todayPnL: 0,
+    cumulativePnL: 0,
+    todayPnLPercentage: 0,
+    cumulativePnLPercentage: 0
+  })
   const router = useRouter()
 
   useEffect(() => {
@@ -14,12 +55,148 @@ export default function DashboardPage() {
       if (!user) {
         router.push('/auth')
       } else {
+        await fetchDashboardData()
         setLoading(false)
       }
     }
 
     checkUser()
+
+    // 监听账号切换事件
+    const handleAccountSwitch = () => {
+      console.log('Dashboard 收到账号切换事件，重新获取数据')
+      fetchDashboardData()
+    }
+
+    window.addEventListener('accountSwitched', handleAccountSwitch)
+
+    return () => {
+      window.removeEventListener('accountSwitched', handleAccountSwitch)
+    }
   }, [router])
+
+  const fetchDashboardData = async () => {
+    try {
+      // 获取当前用户
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+
+      // 获取当前选中的账号ID
+      const currentAccountId = localStorage.getItem('currentAccountId')
+      if (!currentAccountId) return
+
+      // 获取该账号的最新快照数据
+      const { data: latestSnapshot, error: latestError } = await supabase
+        .from('account_snapshots_daily')
+        .select('equity, market_value, cash, as_of_date')
+        .eq('account_id', currentAccountId)
+        .order('as_of_date', { ascending: false })
+        .limit(1)
+        .single()
+
+      if (latestError) {
+        console.error('获取最新快照数据失败:', latestError)
+        return
+      }
+
+      if (!latestSnapshot) return
+
+      // 获取昨天的快照数据用于计算今日盈亏
+      const yesterday = new Date()
+      yesterday.setDate(yesterday.getDate() - 1)
+      const yesterdayStr = yesterday.toISOString().split('T')[0]
+
+      const { data: yesterdaySnapshot } = await supabase
+        .from('account_snapshots_daily')
+        .select('equity')
+        .eq('account_id', currentAccountId)
+        .eq('as_of_date', yesterdayStr)
+        .single()
+
+      // 获取第一个快照数据用于计算累计盈亏
+      const { data: firstSnapshot } = await supabase
+        .from('account_snapshots_daily')
+        .select('equity')
+        .eq('account_id', currentAccountId)
+        .order('as_of_date', { ascending: true })
+        .limit(1)
+        .single()
+
+      // 计算统计数据
+      const currentEquity = latestSnapshot.equity || 0
+      const yesterdayEquity = yesterdaySnapshot?.equity || 0
+      const initialEquity = firstSnapshot?.equity || currentEquity
+
+      const todayPnL = currentEquity - yesterdayEquity
+      const cumulativePnL = currentEquity - initialEquity
+
+      const todayPnLPercentage = yesterdayEquity > 0 ? (todayPnL / yesterdayEquity) * 100 : 0
+      const cumulativePnLPercentage = initialEquity > 0 ? (cumulativePnL / initialEquity) * 100 : 0
+
+      // 更新状态
+      setAssetData({
+        equity: currentEquity,
+        market_value: latestSnapshot.market_value || 0,
+        cash: latestSnapshot.cash || 0
+      })
+
+      setStats({
+        totalAssets: currentEquity,
+        todayPnL: todayPnL,
+        cumulativePnL: cumulativePnL,
+        todayPnLPercentage: todayPnLPercentage,
+        cumulativePnLPercentage: cumulativePnLPercentage
+      })
+
+    } catch (error) {
+      console.error('获取仪表板数据失败:', error)
+    }
+  }
+
+  // 创建Doughnut Chart配置
+  const chartData = {
+    labels: ['现金', '市值'],
+    datasets: [
+      {
+        data: [assetData.cash, assetData.market_value],
+        backgroundColor: [
+          '#78ae78', // 现金 - 绿色
+          '#4a90e2', // 市值 - 蓝色
+        ],
+        borderColor: [
+          '#6a9d6a',
+          '#357abd',
+        ],
+        borderWidth: 2,
+      },
+    ],
+  }
+
+  const chartOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: {
+        position: 'bottom' as const,
+        labels: {
+          padding: 20,
+          usePointStyle: true,
+        },
+      },
+      tooltip: {
+        callbacks: {
+          label: function(context: { label?: string; parsed: number }) {
+            const label = context.label || ''
+            const value = context.parsed
+            const total = assetData.equity
+            const percentage = total > 0 ? ((value / total) * 100).toFixed(1) : 0
+            return `${label}: $${value.toLocaleString()} (${percentage}%)`
+          }
+        }
+      }
+    },
+    cutout: '60%', // 中心空心部分
+  }
 
   if (loading) {
     return (
@@ -35,7 +212,7 @@ export default function DashboardPage() {
   return (
     <div className="p-6">
       <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900 mb-2">仪表板</h1>
+        <h1 className="text-3xl font-bold text-gray-900 mb-2">资产总览</h1>
         <p className="text-gray-600">欢迎使用轻松看资产，查看您的投资概况</p>
       </div>
 
@@ -51,8 +228,10 @@ export default function DashboardPage() {
             </div>
             <div className="ml-4">
               <p className="text-sm font-medium text-gray-500">总资产</p>
-              <p className="text-2xl font-semibold text-gray-900">¥12,345.67</p>
-              <p className="text-sm text-green-600">+1.23%</p>
+              <p className="text-2xl font-semibold text-gray-900">${stats.totalAssets.toLocaleString()}</p>
+              <p className={`text-sm ${stats.cumulativePnLPercentage >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                {stats.cumulativePnLPercentage >= 0 ? '+' : ''}{stats.cumulativePnLPercentage.toFixed(2)}%
+              </p>
             </div>
           </div>
         </div>
@@ -67,8 +246,12 @@ export default function DashboardPage() {
             </div>
             <div className="ml-4">
               <p className="text-sm font-medium text-gray-500">今日盈亏</p>
-              <p className="text-2xl font-semibold text-gray-900">+¥123.45</p>
-              <p className="text-sm text-green-600">+0.45%</p>
+              <p className={`text-2xl font-semibold ${stats.todayPnL >= 0 ? 'text-gray-900' : 'text-red-600'}`}>
+                {stats.todayPnL >= 0 ? '+' : ''}${stats.todayPnL.toLocaleString()}
+              </p>
+              <p className={`text-sm ${stats.todayPnLPercentage >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                {stats.todayPnLPercentage >= 0 ? '+' : ''}{stats.todayPnLPercentage.toFixed(2)}%
+              </p>
             </div>
           </div>
         </div>
@@ -83,8 +266,12 @@ export default function DashboardPage() {
             </div>
             <div className="ml-4">
               <p className="text-sm font-medium text-gray-500">累计盈亏</p>
-              <p className="text-2xl font-semibold text-gray-900">+¥567.89</p>
-              <p className="text-sm text-green-600">+0.67%</p>
+              <p className={`text-2xl font-semibold ${stats.cumulativePnL >= 0 ? 'text-gray-900' : 'text-red-600'}`}>
+                {stats.cumulativePnL >= 0 ? '+' : ''}${stats.cumulativePnL.toLocaleString()}
+              </p>
+              <p className={`text-sm ${stats.cumulativePnLPercentage >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                {stats.cumulativePnLPercentage >= 0 ? '+' : ''}{stats.cumulativePnLPercentage.toFixed(2)}%
+              </p>
             </div>
           </div>
         </div>
@@ -95,13 +282,30 @@ export default function DashboardPage() {
         {/* 资产分布 */}
         <div className="bg-white rounded-lg shadow p-6">
           <h3 className="text-lg font-medium text-gray-900 mb-4">资产分布</h3>
-          <div className="h-64 flex items-center justify-center text-gray-500">
-            <div className="text-center">
-              <svg className="w-12 h-12 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-              </svg>
-              <p>图表功能开发中...</p>
-            </div>
+          <div className="relative h-64">
+            {assetData.equity > 0 ? (
+              <>
+                <Doughnut data={chartData} options={chartOptions} />
+                {/* 中心显示总资产 */}
+                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                  <div className="text-center">
+                    <div className="text-2xl font-bold text-gray-900">
+                      ${assetData.equity.toLocaleString()}
+                    </div>
+                    <div className="text-sm text-gray-500">总资产</div>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div className="h-full flex items-center justify-center text-gray-500">
+                <div className="text-center">
+                  <svg className="w-12 h-12 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                  </svg>
+                  <p>暂无资产数据</p>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 

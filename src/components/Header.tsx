@@ -8,8 +8,6 @@ import { User } from '@supabase/supabase-js'
 interface FundAccount {
   id: string
   name: string
-  amount: number
-  is_active: boolean
   created_at: string
 }
 
@@ -17,7 +15,7 @@ export default function Header() {
   const [user, setUser] = useState<User | null>(null)
   const [loading, setLoading] = useState(false)
   const [fundAccounts, setFundAccounts] = useState<FundAccount[]>([])
-  const [currentAccount, setCurrentAccount] = useState<FundAccount | null>(null)
+  const [currentAccountId, setCurrentAccountId] = useState<string | null>(null)
   const router = useRouter()
 
   useEffect(() => {
@@ -41,7 +39,7 @@ export default function Header() {
           fetchFundAccounts()
         } else {
           setFundAccounts([])
-          setCurrentAccount(null)
+          setCurrentAccountId(null)
         }
       }
     )
@@ -49,32 +47,90 @@ export default function Header() {
     return () => subscription.unsubscribe()
   }, [])
 
+  // 监听 localStorage 中的账号切换事件
+  useEffect(() => {
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === 'currentAccountId') {
+        setCurrentAccountId(e.newValue)
+      }
+    }
+
+    // 监听 localStorage 变化
+    window.addEventListener('storage', handleStorageChange)
+
+    // 监听账号列表更新事件
+    const handleAccountsUpdated = () => {
+      console.log('Header 收到账号列表更新事件，重新获取账号列表')
+      fetchFundAccounts()
+    }
+
+    // 监听自定义事件（同一页面内的切换）
+    const handleAccountSwitch = (e: CustomEvent) => {
+      console.log('Header 收到账号切换事件:', e.detail.accountId)
+      setCurrentAccountId(e.detail.accountId)
+      // 只更新当前账号ID，不重新获取账号列表
+    }
+
+    window.addEventListener('accountsUpdated', handleAccountsUpdated)
+    window.addEventListener('accountSwitched', handleAccountSwitch as EventListener)
+
+    return () => {
+      window.removeEventListener('storage', handleStorageChange)
+      window.removeEventListener('accountsUpdated', handleAccountsUpdated)
+      window.removeEventListener('accountSwitched', handleAccountSwitch as EventListener)
+    }
+  }, [])
+
   const fetchFundAccounts = async () => {
     try {
-      // 这里暂时使用模拟数据，后续可以连接真实的数据库
-      // const { data, error } = await supabase.from('fund_accounts').select('*')
-      
-      // 模拟数据 - 你可以修改这里来测试不同的状态
-      // 设置为空数组来测试"没有账号"的状态
-      const mockAccounts: FundAccount[] = []
-      
-      // 如果要测试"有账号"的状态，可以使用下面的数据：
-      // const mockAccounts: FundAccount[] = [
-      //   {
-      //     id: '1',
-      //     name: '主要投资账户',
-      //     amount: 100000,
-      //     is_active: true,
-      //     created_at: new Date().toISOString()
-      //   }
-      // ]
-      
-      setFundAccounts(mockAccounts)
-      setCurrentAccount(mockAccounts.find(acc => acc.is_active) || null)
+      // 获取当前用户
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) {
+        setFundAccounts([])
+        setCurrentAccountId(null)
+        return
+      }
+
+      // 从 Supabase 获取用户的账号列表
+      const { data: accountsData, error } = await supabase
+        .from('accounts')
+        .select('*')
+        .eq('UUID', user.id)
+        .order('created_at', { ascending: false })
+
+      if (error) {
+        console.error('获取账号列表失败:', error)
+        setFundAccounts([])
+        setCurrentAccountId(null)
+        return
+      }
+
+      // 转换数据格式
+      const formattedAccounts: FundAccount[] = accountsData.map(account => ({
+        id: account.id,
+        name: account.name,
+        created_at: account.created_at
+      }))
+
+      setFundAccounts(formattedAccounts)
+
+      // 从 localStorage 恢复当前账号
+      if (formattedAccounts.length > 0) {
+        const savedAccountId = localStorage.getItem('currentAccountId')
+        if (savedAccountId && formattedAccounts.find(acc => acc.id === savedAccountId)) {
+          setCurrentAccountId(savedAccountId)
+        } else {
+          // 如果没有保存的账号或账号不存在，默认选择第一个
+          setCurrentAccountId(formattedAccounts[0].id)
+          localStorage.setItem('currentAccountId', formattedAccounts[0].id)
+        }
+      } else {
+        setCurrentAccountId(null)
+      }
     } catch (error) {
       console.error('获取基金账号失败:', error)
       setFundAccounts([])
-      setCurrentAccount(null)
+      setCurrentAccountId(null)
     }
   }
 
@@ -151,7 +207,7 @@ export default function Header() {
               <span>
                 {fundAccounts.length === 0 
                   ? '还没有基金账号，点击创建' 
-                  : `当前账号 ${currentAccount?.name || '未选择'}，点击切换账号`
+                  : `基金账号：${fundAccounts.find(acc => acc.id === currentAccountId)?.name || '未选择'}`
                 }
               </span>
             </button>
