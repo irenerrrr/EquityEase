@@ -16,6 +16,7 @@ export default function Header() {
   const [loading, setLoading] = useState(false)
   const [fundAccounts, setFundAccounts] = useState<FundAccount[]>([])
   const [currentAccountId, setCurrentAccountId] = useState<string | null>(null)
+  const [currentAccountName, setCurrentAccountName] = useState<string>('')
   const router = useRouter()
 
   useEffect(() => {
@@ -47,11 +48,43 @@ export default function Header() {
     return () => subscription.unsubscribe()
   }, [])
 
+  // 当账号列表或当前账号变化时，更新显示名称（避免闪烁为空）
+  useEffect(() => {
+    let nameFromList: string | undefined = fundAccounts.find(acc => acc.id === currentAccountId)?.name
+    let nameFromStorage: string | null = null
+    try {
+      const saved = localStorage.getItem('currentAccount')
+      if (saved) {
+        const parsed = JSON.parse(saved)
+        nameFromStorage = parsed?.name || null
+      }
+    } catch {}
+
+    const nextName = nameFromList || nameFromStorage || currentAccountName
+    if (nextName && nextName !== currentAccountName) {
+      setCurrentAccountName(nextName)
+    }
+    console.log('[Header] 更新当前账号名称', {
+      currentAccountId,
+      nameFromList: nameFromList || null,
+      nameFromStorage,
+      finalName: nextName || null,
+      at: new Date().toISOString()
+    })
+  }, [fundAccounts, currentAccountId])
+
   // 监听 localStorage 中的账号切换事件
   useEffect(() => {
     const handleStorageChange = (e: StorageEvent) => {
       if (e.key === 'currentAccountId') {
         setCurrentAccountId(e.newValue)
+      }
+      if (e.key === 'currentAccount' && e.newValue) {
+        try {
+          const parsed = JSON.parse(e.newValue)
+          setCurrentAccountId(parsed?.id || null)
+          if (parsed?.name) setCurrentAccountName(parsed.name)
+        } catch {}
       }
     }
 
@@ -60,15 +93,28 @@ export default function Header() {
 
     // 监听账号列表更新事件
     const handleAccountsUpdated = () => {
-      console.log('Header 收到账号列表更新事件，重新获取账号列表')
+      console.log('[Header] 收到 accountsUpdated 事件，重新获取账号列表', {
+        at: new Date().toISOString()
+      })
       fetchFundAccounts()
     }
 
     // 监听自定义事件（同一页面内的切换）
     const handleAccountSwitch = (e: CustomEvent) => {
-      console.log('Header 收到账号切换事件:', e.detail.accountId)
-      setCurrentAccountId(e.detail.accountId)
-      // 只更新当前账号ID，不重新获取账号列表
+      console.log('[Header] 收到 accountSwitched 事件', {
+        accountId: e.detail.accountId,
+        accountNameFromEvent: e.detail.accountName,
+        at: new Date().toISOString()
+      })
+      setCurrentAccountId(String(e.detail.accountId))
+      // 如果事件里带了名称，立即乐观更新名称，避免列表未刷新前出现空白
+      if (e.detail.accountName) {
+        setCurrentAccountName(e.detail.accountName)
+        try {
+          localStorage.setItem('currentAccount', JSON.stringify({ id: String(e.detail.accountId), name: e.detail.accountName, updatedAt: new Date().toISOString() }))
+        } catch {}
+      }
+      // 不强制重新拉列表，保持轻量
     }
 
     window.addEventListener('accountsUpdated', handleAccountsUpdated)
@@ -105,24 +151,45 @@ export default function Header() {
         return
       }
 
-      // 转换数据格式
+      // 转换数据格式（将 id 统一为字符串，避免与 localStorage 不一致）
       const formattedAccounts: FundAccount[] = accountsData.map(account => ({
-        id: account.id,
+        id: String(account.id),
         name: account.name,
         created_at: account.created_at
       }))
 
+      console.log('[Header] 加载基金账号列表', {
+        count: formattedAccounts.length,
+        ids: formattedAccounts.map(a => a.id),
+        savedAccountId: localStorage.getItem('currentAccountId'),
+        at: new Date().toISOString()
+      })
+
       setFundAccounts(formattedAccounts)
 
-      // 从 localStorage 恢复当前账号
+      // 从 localStorage 恢复当前账号（优先 JSON）
       if (formattedAccounts.length > 0) {
-        const savedAccountId = localStorage.getItem('currentAccountId')
+        const savedJson = localStorage.getItem('currentAccount')
+        let savedId: string | null = null
+        let savedName: string | null = null
+        if (savedJson) {
+          try {
+            const parsed = JSON.parse(savedJson)
+            savedId = parsed?.id || null
+            savedName = parsed?.name || null
+          } catch {}
+        }
+        const savedAccountId = savedId || localStorage.getItem('currentAccountId')
         if (savedAccountId && formattedAccounts.find(acc => acc.id === savedAccountId)) {
           setCurrentAccountId(savedAccountId)
+          if (savedName) setCurrentAccountName(savedName)
+          console.log('[Header] 恢复当前账号成功', { savedAccountId, savedName, at: new Date().toISOString() })
         } else {
           // 如果没有保存的账号或账号不存在，默认选择第一个
           setCurrentAccountId(formattedAccounts[0].id)
           localStorage.setItem('currentAccountId', formattedAccounts[0].id)
+          localStorage.setItem('currentAccount', JSON.stringify({ id: formattedAccounts[0].id, name: formattedAccounts[0].name, updatedAt: new Date().toISOString() }))
+          console.log('[Header] 未找到保存账号，默认选择第一个', { selected: formattedAccounts[0].id, at: new Date().toISOString() })
         }
       } else {
         setCurrentAccountId(null)
@@ -207,7 +274,7 @@ export default function Header() {
               <span>
                 {fundAccounts.length === 0 
                   ? '还没有基金账号，点击创建' 
-                  : `基金账号：${fundAccounts.find(acc => acc.id === currentAccountId)?.name || '未选择'}`
+                  : `基金账号：${currentAccountName || '未选择'}`
                 }
               </span>
             </button>

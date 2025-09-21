@@ -189,21 +189,13 @@ export async function POST(request: NextRequest) {
         } else if (timeRange === '3m') {
           filteredData = historical.slice(-90)
         } else if (timeRange === '6m') {
-          filteredData = historical.slice(-26) // 26周
+          filteredData = historical.slice(-180) // 6个月约180个交易日
         }
         
-        // 生成标签
+        // 生成标签：使用 YYYY-MM-DD，确保横轴刻度稳定且唯一
         const labels = filteredData.map(item => {
           const date = new Date(item.date)
-          switch (timeRange) {
-            case '1m':
-            case '3m':
-              return `${date.getMonth() + 1}/${date.getDate()}`
-            case '6m':
-              return `${date.getMonth() + 1}/${date.getDate()}`
-            default:
-              return date.toISOString().split('T')[0]
-          }
+          return date.toISOString().split('T')[0]
         })
         
         return {

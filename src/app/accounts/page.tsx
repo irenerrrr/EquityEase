@@ -41,13 +41,31 @@ export default function AccountsPage() {
   useEffect(() => {
     if (accounts.length > 0 && !currentAccountId) {
       // 尝试从 localStorage 恢复上次选择的账号
+      const savedAccountJson = localStorage.getItem('currentAccount')
       const savedAccountId = localStorage.getItem('currentAccountId')
-      if (savedAccountId && accounts.find(acc => acc.id === savedAccountId)) {
-        setCurrentAccountId(savedAccountId)
+      let candidateId: string | null = null
+      if (savedAccountJson) {
+        try {
+          const parsed = JSON.parse(savedAccountJson)
+          candidateId = parsed?.id ?? null
+        } catch {}
+      }
+      candidateId = candidateId || savedAccountId
+      if (candidateId && accounts.find(acc => acc.id === candidateId)) {
+        setCurrentAccountId(candidateId)
+        console.log('[AccountSwitch:init] 恢复当前账号自 localStorage', {
+          savedAccountId: candidateId,
+          at: new Date().toISOString()
+        })
       } else {
         // 如果没有保存的账号或账号不存在，默认选择第一个
         setCurrentAccountId(accounts[0].id)
         localStorage.setItem('currentAccountId', accounts[0].id)
+        localStorage.setItem('currentAccount', JSON.stringify({ id: accounts[0].id, name: accounts[0].name, updatedAt: new Date().toISOString() }))
+        console.log('[AccountSwitch:init] 未找到保存的账号，默认选择第一个账号', {
+          selectedAccountId: accounts[0].id,
+          at: new Date().toISOString()
+        })
       }
     }
   }, [accounts, currentAccountId])
@@ -74,20 +92,21 @@ export default function AccountsPage() {
         return
       }
 
-      // 获取每个账号的最新净值
+      // 获取每个账号的最新净值（按用户隔离）
       const formattedAccounts: FundAccount[] = await Promise.all(
         accountsData.map(async (account) => {
           // 获取该账号的最新快照
           const { data: latestSnapshot } = await supabase
             .from('account_snapshots_daily')
             .select('equity')
+            .eq('UUID', user.id)
             .eq('account_id', account.id)
             .order('as_of_date', { ascending: false })
             .limit(1)
             .single()
 
           return {
-            id: account.id,
+            id: String(account.id),
             name: account.name,
             created_at: account.created_at,
             equity: latestSnapshot?.equity || 0
@@ -147,18 +166,23 @@ export default function AccountsPage() {
 
       console.log('账号创建成功:', insertedAccount)
 
-      // 同时在 account_snapshots_daily 表中创建初始快照
-      const today = new Date().toISOString().split('T')[0] // 获取今天的日期 (YYYY-MM-DD)
+      // 同时在 account_snapshots_daily 表中创建初始快照（写入该用户的 UUID）
+      // 创建昨天的快照作为初始值，这样今天就可以正确计算今日盈亏
+      const yesterday = new Date()
+      yesterday.setDate(yesterday.getDate() - 1)
+      const yesterdayStr = yesterday.toISOString().split('T')[0] // 获取昨天的日期 (YYYY-MM-DD)
+      
       const { error: snapshotError } = await supabase
         .from('account_snapshots_daily')
         .insert([
           {
             account_id: insertedAccount.id, // 绑定账号 ID
-            as_of_date: today, // 设置当前日期
+            as_of_date: yesterdayStr, // 设置为昨天的日期
             equity: amount, // 总权益等于输入的金额
             cash: amount, // 现金等于输入的金额
             market_value: 0, // 初始市值为 0
-            realized_pnl_to_date: 0 // 初始已实现盈亏为 0
+            realized_pnl_to_date: 0, // 初始已实现盈亏为 0
+            UUID: user.id // 记录所属用户
           }
         ])
 
@@ -208,15 +232,31 @@ export default function AccountsPage() {
     }
   }
 
-  const handleSwitchAccount = (accountId: string) => {
+  const handleSwitchAccount = (accountId: string, accountName?: string) => {
     // 纯前端操作：更新当前账号ID
+    const previousAccountId = currentAccountId
     setCurrentAccountId(accountId)
     localStorage.setItem('currentAccountId', accountId)
+    if (accountName) {
+      localStorage.setItem('currentAccount', JSON.stringify({ id: accountId, name: accountName, updatedAt: new Date().toISOString() }))
+    }
+    const saved = localStorage.getItem('currentAccountId')
+    console.log('[AccountSwitch] 切换账号', {
+      previousAccountId,
+      newAccountId: accountId,
+      savedToLocalStorage: saved,
+      at: new Date().toISOString()
+    })
     
     // 触发自定义事件，通知 Header 组件更新
     window.dispatchEvent(new CustomEvent('accountSwitched', {
-      detail: { accountId }
+      detail: { accountId, accountName }
     }))
+    console.log('[AccountSwitch:event] 已派发 accountSwitched 事件', {
+      accountId,
+      accountName,
+      at: new Date().toISOString()
+    })
     
     // 只做局部刷新，不跳转页面
   }
@@ -357,7 +397,7 @@ export default function AccountsPage() {
                         </span>
                       )}
                       <span className="text-sm font-medium text-gray-700">
-                        账户净值：${account.equity?.toLocaleString() || '0'}
+                        账户净值：${(account.equity ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </span>
                     </div>
                   </div>
@@ -365,7 +405,14 @@ export default function AccountsPage() {
                   <div className="flex items-center space-x-3">
                     {currentAccountId !== account.id && (
                       <button
-                        onClick={() => handleSwitchAccount(account.id)}
+                        onClick={() => {
+                          console.log('[UI] 点击切换按钮', {
+                            clickedAccountId: account.id,
+                            currentAccountId,
+                            at: new Date().toISOString()
+                          })
+                          handleSwitchAccount(account.id, account.name)
+                        }}
                         className="px-3 py-1 text-sm text-white rounded-md transition-colors"
                         style={{ backgroundColor: '#78ae78' }}
                         onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#6a9d6a'}

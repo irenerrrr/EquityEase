@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 import { Trade } from '@/types'
+import CustomAlert from '@/components/CustomAlert'
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -45,7 +46,7 @@ interface StockData {
   currentPrice: number
   change: number
   changePercent: number
-  dataSource: 'live' | 'cached' | 'alpha_vantage' | 'tiingo' | 'finnhub' | 'yahoo' | 'error' // 数据来源标识
+  dataSource: 'live' | 'cached' | 'alpha_vantage' | 'tiingo' | 'finnhub' | 'yahoo' | 'yahoo_finance' | 'error' // 数据来源标识
   chartData: {
     labels: string[]
     open: number[]
@@ -68,6 +69,18 @@ export default function PortfolioPage() {
   const [stockLoading, setStockLoading] = useState(false)
   const [timeRange, setTimeRange] = useState<TimeRange>('6m')
   const [chartType, setChartType] = useState<ChartType>('price')
+  const [userEquity, setUserEquity] = useState<number>(0)
+  const [userCash, setUserCash] = useState<number>(0)
+  const [ownedShares, setOwnedShares] = useState<number>(0)
+  const [investmentPercentage, setInvestmentPercentage] = useState<string>('')
+  const [sharePrice, setSharePrice] = useState<string>('')
+  const [calculatedShares, setCalculatedShares] = useState<number>(0)
+  const [manualShares, setManualShares] = useState<string>('')
+  const [buying, setBuying] = useState<boolean>(false)
+  const [sellShares, setSellShares] = useState<string>('')
+  const [sellPrice, setSellPrice] = useState<string>('')
+  const [selling, setSelling] = useState<boolean>(false)
+  const [alert, setAlert] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null)
   const router = useRouter()
 
   useEffect(() => {
@@ -77,12 +90,30 @@ export default function PortfolioPage() {
         router.push('/auth')
       } else {
         await fetchPortfolio()
+        await fetchUserEquity()
         await fetchStockData()
+        await fetchOwnedShares()
         setLoading(false)
       }
     }
 
     checkUser()
+
+    // 监听账号切换，刷新本页数据
+    const handleAccountSwitch = (e: CustomEvent) => {
+      console.log('[Portfolio] 收到 accountSwitched 事件，刷新数据', {
+        accountId: e.detail?.accountId ?? localStorage.getItem('currentAccountId'),
+        at: new Date().toISOString()
+      })
+      fetchPortfolio()
+      fetchUserEquity()
+      fetchStockData(true)
+      fetchOwnedShares()
+    }
+    window.addEventListener('accountSwitched', handleAccountSwitch as EventListener)
+    return () => {
+      window.removeEventListener('accountSwitched', handleAccountSwitch as EventListener)
+    }
   }, [router])
 
   // 监听时间范围变化，自动重新获取数据
@@ -91,6 +122,13 @@ export default function PortfolioPage() {
       fetchStockData(true)
     }
   }, [timeRange])
+
+  // 监听股票数据或百分比变化，重新计算股数
+  useEffect(() => {
+    if (investmentPercentage && stockData.length > 0) {
+      calculateShares(investmentPercentage, sharePrice)
+    }
+  }, [stockData, selectedStock, userCash])
 
   const fetchPortfolio = async () => {
     try {
@@ -136,17 +174,548 @@ export default function PortfolioPage() {
         // 过滤掉数量为0的持仓
         const portfolioItems = Array.from(portfolioMap.values()).filter(item => item.total_quantity > 0)
         
-        // 计算盈亏（这里使用成本价作为当前价格的示例）
-        portfolioItems.forEach(item => {
-          item.current_value = item.total_quantity * item.average_cost // 实际应用中这里要用实时价格
-          item.profit_loss = item.current_value - item.total_cost
-          item.profit_loss_percentage = (item.profit_loss / item.total_cost) * 100
-        })
+        // 获取所有持仓的当前市场价格
+        if (portfolioItems.length > 0) {
+          const symbols = portfolioItems.map(item => item.stock_symbol)
+          
+          try {
+            const stockResponse = await fetch('/api/stocks/cache', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                symbols: symbols,
+                timeRange: '1d' // 只需要当前价格
+              })
+            })
+
+            if (stockResponse.ok) {
+              const stockData = await stockResponse.json()
+              
+              // 更新每个持仓的当前价格和市值
+              portfolioItems.forEach(item => {
+                const stock = stockData.find((s: any) => s.symbol === item.stock_symbol)
+                if (stock) {
+                  item.current_value = item.total_quantity * stock.currentPrice
+                  item.profit_loss = item.current_value - item.total_cost
+                  item.profit_loss_percentage = (item.profit_loss / item.total_cost) * 100
+                } else {
+                  // 如果获取不到实时价格，使用成本价
+                  item.current_value = item.total_quantity * item.average_cost
+                  item.profit_loss = item.current_value - item.total_cost
+                  item.profit_loss_percentage = (item.profit_loss / item.total_cost) * 100
+                }
+              })
+            }
+          } catch (error) {
+            console.error('获取当前价格失败:', error)
+            // 如果获取失败，使用成本价
+            portfolioItems.forEach(item => {
+              item.current_value = item.total_quantity * item.average_cost
+              item.profit_loss = item.current_value - item.total_cost
+              item.profit_loss_percentage = (item.profit_loss / item.total_cost) * 100
+            })
+          }
+        }
         
         setPortfolio(portfolioItems)
       }
     } catch (error) {
       console.error('获取持仓数据失败:', error)
+    }
+  }
+
+  const fetchUserEquity = async () => {
+    try {
+      // 获取当前用户
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+
+      // 获取当前选中的账号ID
+      let currentAccountId = localStorage.getItem('currentAccountId')
+      const savedJson = localStorage.getItem('currentAccount')
+      if (savedJson) {
+        try {
+          const parsed = JSON.parse(savedJson)
+          if (parsed?.id) currentAccountId = String(parsed.id)
+        } catch {}
+      }
+      if (!currentAccountId) return
+
+      // 获取该账号的最新快照数据（按账号与当前用户过滤）
+      const { data: latestSnapshot, error: latestError } = await supabase
+        .from('account_snapshots_daily')
+        .select('equity, cash')
+        .eq('UUID', user.id)
+        .eq('account_id', parseInt(currentAccountId))
+        .order('as_of_date', { ascending: false })
+        .limit(1)
+        .single()
+
+      if (latestError) {
+        console.error('获取用户资产失败:', latestError)
+        return
+      }
+
+      if (latestSnapshot) {
+        const equity = latestSnapshot.equity || 0
+        const cash = latestSnapshot.cash || 0
+        setUserEquity(equity)
+        setUserCash(cash)
+        console.log('用户资产获取成功:', equity, '现金:', cash)
+      }
+    } catch (error) {
+      console.error('获取用户资产失败:', error)
+    }
+  }
+
+  // 从 positions 表获取当前选中股票的持有股数
+  const fetchOwnedShares = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+
+      // 获取当前选中的账号ID（优先JSON）
+      let currentAccountId = localStorage.getItem('currentAccountId')
+      const savedJson = localStorage.getItem('currentAccount')
+      if (savedJson) {
+        try {
+          const parsed = JSON.parse(savedJson)
+          if (parsed?.id) currentAccountId = String(parsed.id)
+        } catch {}
+      }
+      if (!currentAccountId) return
+
+      // 从 positions API 获取持仓数据
+      const params = new URLSearchParams({ account_id: String(currentAccountId) })
+      const { data: { session } } = await supabase.auth.getSession()
+      const res = await fetch(`/api/positions?${params.toString()}`, {
+        headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}
+      })
+      if (!res.ok) {
+        console.error('获取持仓数据失败')
+        setOwnedShares(0)
+        return
+      }
+      const json = await res.json()
+      const positions = (json?.positions || []) as Array<{ 
+        net_qty: number; 
+        symbols: { symbol: string } 
+      }>
+
+      // 查找当前选中股票的持仓
+      const symbol = selectedStock
+      const currentPosition = positions.find(pos => pos.symbols.symbol === symbol)
+      const netQty = currentPosition ? Number(currentPosition.net_qty) || 0 : 0
+      
+      setOwnedShares(netQty)
+      console.log('[Portfolio] 获取持仓股数', { symbol, netQty })
+    } catch (err) {
+      console.error('获取持仓股数失败:', err)
+      setOwnedShares(0)
+    }
+  }
+
+  const calculateShares = (percentage: string, price: string) => {
+    console.log('计算股数:', { percentage, price, userCash })
+    
+    // 如果百分比为空，显示占位符
+    if (!percentage) {
+      setCalculatedShares(0)
+      return
+    }
+    
+    const percentageNum = parseFloat(percentage)
+    if (isNaN(percentageNum) || percentageNum <= 0 || percentageNum > 100) {
+      setCalculatedShares(0)
+      return
+    }
+
+    if (userCash <= 0) {
+      console.log('用户资产为0或未获取到')
+      setCalculatedShares(0)
+      return
+    }
+
+    // 如果用户没有输入价格，使用当前股票价格
+    let priceNum: number
+    if (!price || price.trim() === '') {
+      const currentStock = stockData.find(stock => stock.symbol === selectedStock)
+      priceNum = currentStock?.currentPrice || 0
+      console.log('使用当前股票价格:', priceNum)
+    } else {
+      priceNum = parseFloat(price)
+    }
+    
+    if (isNaN(priceNum) || priceNum <= 0) {
+      setCalculatedShares(0)
+      return
+    }
+
+    const investmentAmount = (userCash * percentageNum) / 100
+    const shares = Math.floor(investmentAmount / priceNum)
+    
+    console.log('计算结果:', { investmentAmount, shares, usedPrice: priceNum })
+    setCalculatedShares(shares)
+  }
+
+  const handlePercentageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value
+    setInvestmentPercentage(value)
+    calculateShares(value, sharePrice)
+  }
+
+  const handlePriceChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value
+    setSharePrice(value)
+    calculateShares(investmentPercentage, value)
+  }
+
+  // 当选中的股票切换时，重新计算持有股数
+  useEffect(() => {
+    if (!loading) {
+      fetchOwnedShares()
+    }
+  }, [selectedStock])
+
+  const handleBuyStock = async () => {
+    try {
+      setBuying(true)
+
+      // 验证输入
+      if (!sharePrice) {
+        setAlert({ message: '请填写每股价格', type: 'error' })
+        return
+      }
+
+      const percentageNum = investmentPercentage ? parseFloat(investmentPercentage) : 0
+      const priceNum = parseFloat(sharePrice)
+      const sharesNum = manualShares ? parseInt(manualShares) : 0
+
+      // 如果填写了百分比，验证其有效性
+      if (investmentPercentage && (isNaN(percentageNum) || percentageNum <= 0 || percentageNum > 100)) {
+        setAlert({ message: '投资百分比必须在1-100之间', type: 'error' })
+        return
+      }
+
+      if (isNaN(priceNum) || priceNum <= 0) {
+        setAlert({ message: '每股价格必须大于0', type: 'error' })
+        return
+      }
+
+      if (!manualShares || isNaN(sharesNum) || sharesNum <= 0) {
+        setAlert({ message: '请填写股票数量', type: 'error' })
+        return
+      }
+
+      // 获取当前用户和账号ID
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) {
+        setAlert({ message: '用户未登录', type: 'error' })
+        return
+      }
+
+      const currentAccountId = localStorage.getItem('currentAccountId')
+      if (!currentAccountId) {
+        setAlert({ message: '请先选择一个账号', type: 'error' })
+        return
+      }
+
+      // 计算总金额
+      const totalAmount = sharesNum * priceNum
+
+      // 获取认证token
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session?.access_token) {
+        setAlert({ message: '用户未登录', type: 'error' })
+        return
+      }
+
+      // 创建交易记录
+      const transactionResponse = await fetch('/api/transactions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          qty: sharesNum,
+          price: priceNum,
+          amount: totalAmount,
+          tx_type: 'buy',
+          account_id: parseInt(currentAccountId),
+          UUID: user.id,
+          symbol: selectedStock,
+        }),
+      })
+
+      if (transactionResponse.ok) {
+        const transactionResult = await transactionResponse.json()
+        console.log('交易记录创建成功:', transactionResult)
+
+        // 更新持仓
+        const positionResponse = await fetch('/api/positions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session.access_token}`,
+          },
+          body: JSON.stringify({
+            symbol: selectedStock,
+            account_id: parseInt(currentAccountId),
+            UUID: user.id,
+            qty: sharesNum,
+            price: priceNum,
+            tx_type: 'buy'
+          }),
+        })
+
+        if (!positionResponse.ok) {
+          const positionError = await positionResponse.json()
+          console.error('持仓更新失败:', positionError)
+          setAlert({ 
+            message: `交易记录已保存，但持仓更新失败：${positionError.error}`, 
+            type: 'error' 
+          })
+          return
+        }
+
+        // 获取当前市场价格
+        const currentStock = stockData.find(stock => stock.symbol === selectedStock)
+        const currentMarketPrice = currentStock?.currentPrice || priceNum
+
+        // 更新账户快照
+        const snapshotResponse = await fetch('/api/account-snapshots', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session.access_token}`,
+          },
+          body: JSON.stringify({
+            account_id: parseInt(currentAccountId),
+            transaction_amount: totalAmount,
+            transaction_type: 'buy',
+            UUID: user.id,
+            symbol: selectedStock,
+            qty: sharesNum,
+            current_market_price: currentMarketPrice
+          }),
+        })
+
+        if (snapshotResponse.ok) {
+          const snapshotResult = await snapshotResponse.json()
+          console.log('账户快照更新成功:', snapshotResult)
+          
+          setAlert({ 
+            message: `成功买入 ${sharesNum} 股 ${selectedStock}，总金额：$${totalAmount.toFixed(2)}`, 
+            type: 'success' 
+          })
+          
+          // 清空输入框，仅保留占位符
+            setInvestmentPercentage('')
+            setSharePrice('')
+            setCalculatedShares(0)
+            setManualShares('')
+          
+          // 刷新持仓数据和用户资产
+          await fetchPortfolio()
+          await fetchUserEquity()
+          await fetchOwnedShares()
+          
+          // 派发交易完成事件
+          window.dispatchEvent(new CustomEvent('transactionComplete', {
+            detail: {
+              type: 'buy',
+              symbol: selectedStock,
+              qty: sharesNum,
+              amount: totalAmount,
+              at: new Date().toISOString()
+            }
+          }))
+        } else {
+          const snapshotError = await snapshotResponse.json()
+          console.error('账户快照更新失败:', snapshotError)
+          setAlert({ 
+            message: `交易记录已保存，但账户快照更新失败：${snapshotError.error}`, 
+            type: 'error' 
+          })
+        }
+      } else {
+        const error = await transactionResponse.json()
+        console.error('交易记录创建失败:', error)
+        setAlert({ message: `买入失败：${error.error}`, type: 'error' })
+      }
+    } catch (error) {
+      console.error('买入股票失败:', error)
+      setAlert({ message: '买入股票失败，请重试', type: 'error' })
+    } finally {
+      setBuying(false)
+    }
+  }
+
+  const handleSellStock = async () => {
+    try {
+      setSelling(true)
+
+      // 验证输入
+      if (!sellShares || !sellPrice) {
+        setAlert({ message: '请填写卖出股数和每股价格', type: 'error' })
+        return
+      }
+
+      const sharesNum = parseInt(sellShares)
+      const priceNum = parseFloat(sellPrice)
+
+      if (isNaN(sharesNum) || sharesNum <= 0) {
+        setAlert({ message: '卖出股数必须大于0', type: 'error' })
+        return
+      }
+
+      if (isNaN(priceNum) || priceNum <= 0) {
+        setAlert({ message: '每股价格必须大于0', type: 'error' })
+        return
+      }
+
+      if (sharesNum > ownedShares) {
+        setAlert({ message: `卖出股数不能超过持有股数 ${ownedShares}`, type: 'error' })
+        return
+      }
+
+      // 获取当前用户和账号ID
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) {
+        setAlert({ message: '用户未登录', type: 'error' })
+        return
+      }
+
+      // 获取当前选中的账号ID
+      let currentAccountId = localStorage.getItem('currentAccountId')
+      const savedJson = localStorage.getItem('currentAccount')
+      if (savedJson) {
+        try {
+          const parsed = JSON.parse(savedJson)
+          if (parsed?.id) currentAccountId = String(parsed.id)
+        } catch {}
+      }
+      if (!currentAccountId) {
+        setAlert({ message: '请先选择账户', type: 'error' })
+        return
+      }
+
+      const totalAmount = sharesNum * priceNum
+
+      // 创建卖出交易记录
+      const { data: { session } } = await supabase.auth.getSession()
+      const transactionResponse = await fetch('/api/transactions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session?.access_token}`,
+        },
+        body: JSON.stringify({
+          qty: sharesNum,
+          price: priceNum,
+          amount: totalAmount,
+          tx_type: 'sell',
+          account_id: parseInt(currentAccountId),
+          UUID: user.id,
+          symbol: selectedStock
+        })
+      })
+
+      if (!transactionResponse.ok) {
+        const transactionError = await transactionResponse.json()
+        console.error('交易记录创建失败:', transactionError)
+        setAlert({ 
+          message: `交易记录创建失败：${transactionError.error}`, 
+          type: 'error' 
+        })
+        return
+      }
+
+      // 先更新账户快照（在positions更新之前）
+      const snapshotResponse = await fetch('/api/account-snapshots', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session?.access_token}`,
+        },
+        body: JSON.stringify({
+          account_id: parseInt(currentAccountId),
+          transaction_amount: totalAmount,
+          transaction_type: 'sell',
+          UUID: user.id,
+          symbol: selectedStock,
+          qty: sharesNum
+        })
+      })
+
+      if (!snapshotResponse.ok) {
+        const snapshotError = await snapshotResponse.json()
+        console.error('账户快照更新失败:', snapshotError)
+        setAlert({ 
+          message: `交易记录已保存，但账户快照更新失败：${snapshotError.error}`, 
+          type: 'error' 
+        })
+        return
+      }
+
+      // 后更新持仓
+      const positionResponse = await fetch('/api/positions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session?.access_token}`,
+        },
+        body: JSON.stringify({
+          symbol: selectedStock,
+          account_id: parseInt(currentAccountId),
+          UUID: user.id,
+          qty: sharesNum,
+          price: priceNum,
+          tx_type: 'sell'
+        })
+      })
+
+      if (!positionResponse.ok) {
+        const positionError = await positionResponse.json()
+        console.error('持仓更新失败:', positionError)
+        setAlert({ 
+          message: `交易记录和账户快照已保存，但持仓更新失败：${positionError.error}`, 
+          type: 'error' 
+        })
+        return
+      }
+
+      // 所有操作都成功完成
+      setAlert({ 
+        message: `成功卖出 ${sharesNum} 股 ${selectedStock}，总金额：$${totalAmount.toFixed(2)}`, 
+        type: 'success' 
+      })
+      
+      // 清空输入框
+      setSellShares('')
+      setSellPrice('')
+      
+      // 刷新持仓数据和用户资产
+      await fetchPortfolio()
+      await fetchUserEquity()
+      await fetchOwnedShares()
+      
+      // 派发交易完成事件
+      window.dispatchEvent(new CustomEvent('transactionComplete', {
+        detail: {
+          type: 'sell',
+          symbol: selectedStock,
+          qty: sharesNum,
+          amount: totalAmount,
+          at: new Date().toISOString()
+        }
+      }))
+    } catch (error) {
+      console.error('卖出股票失败:', error)
+      setAlert({ message: '卖出失败，请重试', type: 'error' })
+    } finally {
+      setSelling(false)
     }
   }
 
@@ -357,6 +926,14 @@ export default function PortfolioPage() {
 
   return (
     <div className="p-6">
+      {/* 自定义提示框 */}
+      {alert && (
+        <CustomAlert
+          message={alert.message}
+          type={alert.type}
+          onClose={() => setAlert(null)}
+        />
+      )}
       {/* 页面标题 */}
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-gray-900 mb-2">持仓</h1>
@@ -465,8 +1042,8 @@ export default function PortfolioPage() {
             ? 'bg-green-100 text-green-800' 
             : currentStock.dataSource === 'tiingo'
             ? 'bg-purple-100 text-purple-800'
-            : currentStock.dataSource === 'yahoo'
-            ? 'bg-indigo-100 text-indigo-800'
+            : (currentStock.dataSource === 'yahoo' || currentStock.dataSource === 'yahoo_finance')
+            ? 'bg-purple-100 text-purple-800'
             : currentStock.dataSource === 'finnhub'
             ? 'bg-orange-100 text-orange-800'
             : currentStock.dataSource === 'alpha_vantage'
@@ -479,11 +1056,11 @@ export default function PortfolioPage() {
         }`}>
           {currentStock.dataSource === 'live' ? '实时数据' : 
            currentStock.dataSource === 'tiingo' ? 'Tiingo' :
-           currentStock.dataSource === 'yahoo' ? 'Yahoo Finance' :
-           currentStock.dataSource === 'finnhub' ? 'Finnhub' :
-           currentStock.dataSource === 'alpha_vantage' ? 'Alpha Vantage' :
-           currentStock.dataSource === 'cached' ? '缓存数据' : 
-           currentStock.dataSource === 'error' ? '数据错误' : '未知数据源'}
+           (currentStock.dataSource === 'yahoo' || currentStock.dataSource === 'yahoo_finance') ? 'yahoo_finance' :
+            currentStock.dataSource === 'finnhub' ? 'Finnhub' :
+            currentStock.dataSource === 'alpha_vantage' ? 'Alpha Vantage' :
+            currentStock.dataSource === 'cached' ? '缓存数据' : 
+            currentStock.dataSource === 'error' ? '数据错误' : '未知数据源'}
         </span>
                   </div>
                 </div>
@@ -537,62 +1114,50 @@ export default function PortfolioPage() {
       <div className="mt-8 grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* 买入卡片 */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">买入股票</h3>
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                投入资金比例 (%)
-              </label>
-              <input
-                type="number"
-                defaultValue="10"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
-              />
+          <div className="text-left">
+            <p className="mb-4 text-sm" style={{color: '#768077'}}>
+              我现在有 <span className="font-semibold text-gray-900">${userCash.toFixed(2)}</span> 现金，我准备投入资产总额 <input type="text" placeholder="10" value={investmentPercentage} onChange={handlePercentageChange} className="w-16 px-2 py-1 border border-gray-300 rounded text-center text-gray-700 placeholder:text-gray-400 placeholder:italic" /> %的资金，<br/>
+              每股 <input type="text" placeholder={currentStock?.currentPrice?.toFixed(2) || '0.00'} value={sharePrice} onChange={handlePriceChange} className="w-20 px-2 py-1 border border-gray-300 rounded text-center text-gray-700 placeholder:text-gray-400 placeholder:italic" /> $，也就是 <input type="text" placeholder={(function(){
+                const pct = parseFloat(investmentPercentage)
+                const p = parseFloat(sharePrice || (currentStock?.currentPrice?.toFixed(2) || '0'))
+                if (!isNaN(pct) && pct > 0 && pct <= 100 && p > 0 && userCash > 0) {
+                  const invest = (userCash * pct) / 100
+                  const sh = Math.floor(invest / p)
+                  return sh > 0 ? String(sh) : '0'
+                }
+                return calculatedShares > 0 ? String(calculatedShares) : '0'
+              })()} value={manualShares} onChange={(e) => setManualShares(e.target.value)} className="w-20 px-2 py-1 border border-gray-300 rounded text-center text-gray-700 placeholder:text-gray-400 placeholder:italic" /> 股
+            </p>
+            <div className="flex justify-end">
+              <button 
+                onClick={handleBuyStock}
+                disabled={buying}
+                className="text-white font-medium py-2 px-4 rounded-md transition-colors hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed" 
+                style={{backgroundColor: '#76b947'}}
+              >
+                {buying ? '处理中...' : '确认购入'}
+              </button>
             </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                购买股数
-              </label>
-              <input
-                type="number"
-                defaultValue="200"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
-              />
-            </div>
-            <button className="w-full bg-green-500 hover:bg-green-600 text-white font-medium py-2 px-4 rounded-md transition-colors">
-              确认购入
-            </button>
           </div>
         </div>
 
         {/* 卖出卡片 */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">卖出股票</h3>
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                卖出股数
-              </label>
-              <input
-                type="number"
-                defaultValue="100"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-              />
+          <div className="text-left">
+            <p className="mb-4 text-sm" style={{color: '#768077'}}>
+              我现在拥有 <span className="font-semibold text-gray-900">{ownedShares}</span> 股，
+              我想卖出 <input type="text" placeholder={ownedShares > 0 ? ownedShares.toString() : '0'} value={sellShares} onChange={(e) => setSellShares(e.target.value)} className="w-16 px-2 py-1 border border-gray-300 rounded text-center text-gray-700 placeholder:text-gray-400 placeholder:italic" /> 股,每股 <input type="text" placeholder={currentStock?.currentPrice?.toFixed(2) || '0.00'} value={sellPrice} onChange={(e) => setSellPrice(e.target.value)} className="w-20 px-2 py-1 border border-gray-300 rounded text-center text-gray-700 placeholder:text-gray-400 placeholder:italic" /> 元
+            </p>
+            <div className="flex justify-end">
+              <button 
+                onClick={handleSellStock}
+                disabled={selling}
+                className="text-white font-medium py-2 px-4 rounded-md transition-colors hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed" 
+                style={{backgroundColor: '#f4a261'}}
+              >
+                {selling ? '处理中...' : '确认卖出'}
+              </button>
             </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                每股价格 (元)
-              </label>
-              <input
-                type="number"
-                step="0.01"
-                defaultValue="50.00"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-              />
-            </div>
-            <button className="w-full bg-orange-500 hover:bg-orange-600 text-white font-medium py-2 px-4 rounded-md transition-colors">
-              确认卖出
-            </button>
           </div>
         </div>
       </div>
