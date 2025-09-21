@@ -21,6 +21,7 @@ interface UpdateSnapshotInput {
   symbol?: string
   qty?: number
   current_market_price?: number  // 新增：当前市场价格
+  action?: 'refresh'
 }
 
 // GET - 获取账户快照
@@ -85,8 +86,12 @@ export async function POST(request: NextRequest) {
     const body: UpdateSnapshotInput = await request.json()
     console.log('[Snapshots][Server] 收到更新请求:', body)
     
-    // 验证必填字段
-    if (!body.account_id || !body.transaction_amount || !body.transaction_type) {
+    // 验证必填字段（支持 action=refresh 模式）
+    if (!body.account_id) {
+      return NextResponse.json({ error: 'Missing account_id' }, { status: 400 })
+    }
+    const isRefresh = body.action === 'refresh'
+    if (!isRefresh && (!body.transaction_amount || !body.transaction_type)) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
     }
 
@@ -124,7 +129,10 @@ export async function POST(request: NextRequest) {
       newMarketValue = latestSnapshot.market_value || 0
       newRealizedPnl = latestSnapshot.realized_pnl_to_date || 0
 
-      if (body.transaction_type === 'buy') {
+      if (isRefresh) {
+        // 刷新：重算市值，现金/已实现沿用
+        console.log('[Snapshots][Server] 刷新模式：重算市值')
+      } else if (body.transaction_type === 'buy') {
         // 买入：减少现金，增加市值（按当前市场价格计算）
         let currentMarketPrice = 0
         
@@ -200,7 +208,7 @@ export async function POST(request: NextRequest) {
         })
       }
 
-      // 关键变更：按“卖出/买入完成后的持仓”重算总市值 = Σ(持仓数量 × 当前市价)
+      // 关键变更：按“卖出/买入完成后的持仓”或刷新后重算总市值 = Σ(持仓数量 × 当前市价)
       try {
         // 1) 获取该账户的所有持仓（包含 symbol）
         const { data: allPositions } = await supabase
@@ -213,7 +221,7 @@ export async function POST(request: NextRequest) {
         let adjusted = (allPositions || []).map((p: any) => {
           const symbol = p.symbols?.symbol as string | undefined
           let qty = Number(p.net_qty) || 0
-          if (symbol && body.symbol && symbol === body.symbol && body.qty) {
+          if (!isRefresh && symbol && body.symbol && symbol === body.symbol && body.qty) {
             // 注意：买入时 positions 已经包含了本次买入后的数量，不要再 +qty；
             // 卖出时 snapshots 先于 positions 更新，这里需要扣掉本次卖出的数量。
             if (body.transaction_type === 'sell') {
@@ -224,11 +232,7 @@ export async function POST(request: NextRequest) {
         }).filter(p => p.symbol && p.qty > 0)
 
         // 若买入且 positions 尚未出现该标的（极少数失败/新建场景），用本次买入补一条
-        if (
-          body.transaction_type === 'buy' &&
-          body.symbol && body.qty &&
-          !adjusted.some(a => a.symbol === body.symbol)
-        ) {
+        if (!isRefresh && body.transaction_type === 'buy' && body.symbol && body.qty && !adjusted.some(a => a.symbol === body.symbol)) {
           adjusted.push({ symbol: body.symbol, qty: body.qty })
         }
 
@@ -264,12 +268,36 @@ export async function POST(request: NextRequest) {
       newMarketValue = 0
       newRealizedPnl = 0
 
-      if (body.transaction_type === 'buy') {
+      if (!isRefresh && body.transaction_type === 'buy') {
         newCash -= body.transaction_amount
         newMarketValue += body.transaction_amount
       }
 
       newEquity = newCash + newMarketValue
+    }
+
+    // 计算当日 daily_return 与累计因子 cum_factor
+    let dailyReturn = 0
+    let cumFactor = 1
+    try {
+      const yesterday = new Date(today)
+      yesterday.setDate(yesterday.getDate() - 1)
+      const yStr = yesterday.toISOString().split('T')[0]
+
+      const { data: ySnap } = await supabase
+        .from('account_snapshots_daily')
+        .select('equity, cum_factor')
+        .eq('account_id', body.account_id)
+        .eq('UUID', user.id)
+        .eq('as_of_date', yStr)
+        .single()
+
+      const prevEquity = Number(ySnap?.equity) || 0
+      const prevCum = Number(ySnap?.cum_factor) || 1
+      dailyReturn = prevEquity > 0 ? (newEquity / prevEquity - 1) : 0
+      cumFactor = prevCum * (1 + dailyReturn)
+    } catch (e) {
+      console.warn('[Snapshots][Server] 计算daily_return/cum_factor失败，使用默认值', e)
     }
 
     // 使用upsert操作，自动处理插入或更新
@@ -283,6 +311,8 @@ export async function POST(request: NextRequest) {
           market_value: newMarketValue,
           cash: newCash,
           realized_pnl_to_date: newRealizedPnl,
+          daily_return: dailyReturn,
+          cum_factor: cumFactor,
           UUID: user.id,
         }
       ], {

@@ -133,6 +133,21 @@ export default function DashboardPage() {
       }
       if (!currentAccountId) return
 
+      // 首页打开时，先触发一次快照刷新，重算市值并更新 daily_return/cum_factor
+      try {
+        const { data: { session } } = await supabase.auth.getSession()
+        await fetch('/api/account-snapshots', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {})
+          },
+          body: JSON.stringify({ account_id: Number(currentAccountId), action: 'refresh' })
+        })
+      } catch (e) {
+        console.warn('[Dashboard] 快照刷新失败，继续读取已有快照', e)
+      }
+
       // 并行获取所有数据
       const [snapshotData, positionsData, transactionData] = await Promise.all([
         fetchSnapshotData(currentAccountId),
@@ -147,6 +162,7 @@ export default function DashboardPage() {
       const marketValue = snapshotData.market_value || 0
       const currentEquity = snapshotData.equity || 0  // 直接使用数据库中的equity
       const yesterdayEquity = snapshotData.yesterdayEquity || 0
+      // 复利相关字段已移除显示，仅保留现有统计
 
       // 重新计算当前市值（基于当前市场价格）- 仅用于显示持仓详情
       const currentMarketValue = positionsData.reduce((sum, pos) => sum + (pos.current_value || 0), 0)
@@ -193,6 +209,8 @@ export default function DashboardPage() {
       // 累计盈亏 = 今日盈亏（因为只有昨天和今天的数据）
       const cumulativePnL = todayPnL
       const cumulativePnLPercentage = todayPnLPercentage
+
+      // 复利相关指标已移除
 
       // 更新状态
       setAssetData({
@@ -260,7 +278,9 @@ export default function DashboardPage() {
         equity: latestSnapshot.equity || 0,
         market_value: latestSnapshot.market_value || 0,
         cash: latestSnapshot.cash || 0,
-        yesterdayEquity: yesterdaySnapshot?.equity || 0
+        yesterdayEquity: yesterdaySnapshot?.equity || 0,
+        firstDate: undefined,
+        latestDate: latestSnapshot.as_of_date
       }
     } catch (error) {
       console.error('获取快照数据失败:', error)
@@ -475,7 +495,7 @@ export default function DashboardPage() {
             </div>
             <div className="ml-4">
               <p className="text-sm font-medium text-gray-500">总资产</p>
-              <p className="text-2xl font-semibold text-gray-900">${stats.totalAssets.toLocaleString()}</p>
+              <p className="text-2xl font-semibold text-gray-900">${stats.totalAssets.toFixed(2)}</p>
               <p className={`text-sm ${stats.cumulativePnLPercentage >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                 {stats.cumulativePnLPercentage >= 0 ? '+' : ''}{stats.cumulativePnLPercentage.toFixed(2)}%
               </p>
@@ -494,7 +514,7 @@ export default function DashboardPage() {
             <div className="ml-4">
               <p className="text-sm font-medium text-gray-500">今日盈亏</p>
               <p className={`text-2xl font-semibold ${stats.todayPnL >= 0 ? 'text-gray-900' : 'text-red-600'}`}>
-                {stats.todayPnL >= 0 ? '+' : ''}${stats.todayPnL.toLocaleString()}
+                {stats.todayPnL >= 0 ? '+' : ''}${stats.todayPnL.toFixed(2)}
               </p>
               <p className={`text-sm ${stats.todayPnLPercentage >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                 {stats.todayPnLPercentage >= 0 ? '+' : ''}{stats.todayPnLPercentage.toFixed(2)}%
@@ -514,7 +534,7 @@ export default function DashboardPage() {
             <div className="ml-4">
               <p className="text-sm font-medium text-gray-500">累计盈亏</p>
               <p className={`text-2xl font-semibold ${stats.cumulativePnL >= 0 ? 'text-gray-900' : 'text-red-600'}`}>
-                {stats.cumulativePnL >= 0 ? '+' : ''}${stats.cumulativePnL.toLocaleString()}
+                {stats.cumulativePnL >= 0 ? '+' : ''}${stats.cumulativePnL.toFixed(2)}
               </p>
               <p className={`text-sm ${stats.cumulativePnLPercentage >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                 {stats.cumulativePnLPercentage >= 0 ? '+' : ''}{stats.cumulativePnLPercentage.toFixed(2)}%
@@ -522,6 +542,8 @@ export default function DashboardPage() {
             </div>
           </div>
         </div>
+
+        
       </div>
 
       {/* 新增统计卡片 */}
@@ -537,7 +559,7 @@ export default function DashboardPage() {
             <div className="ml-4">
               <p className="text-sm font-medium text-gray-500">已实现盈亏</p>
               <p className={`text-xl font-semibold ${stats.realizedPnL >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                {stats.realizedPnL >= 0 ? '+' : ''}${stats.realizedPnL.toLocaleString()}
+                {stats.realizedPnL >= 0 ? '+' : ''}${stats.realizedPnL.toFixed(2)}
               </p>
             </div>
           </div>
@@ -554,7 +576,7 @@ export default function DashboardPage() {
             <div className="ml-4">
               <p className="text-sm font-medium text-gray-500">未实现盈亏</p>
               <p className={`text-xl font-semibold ${stats.unrealizedPnL >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                {stats.unrealizedPnL >= 0 ? '+' : ''}${stats.unrealizedPnL.toLocaleString()}
+                {stats.unrealizedPnL >= 0 ? '+' : ''}${stats.unrealizedPnL.toFixed(2)}
               </p>
             </div>
           </div>
@@ -662,10 +684,10 @@ export default function DashboardPage() {
                 <Doughnut data={chartData} options={chartOptions} />
                 {/* 中心显示总资产 */}
                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                  <div className="text-center">
-                    <div className="text-2xl font-bold text-gray-900">
-                      ${assetData.equity.toLocaleString()}
-                    </div>
+            <div className="text-center">
+              <div className="text-2xl font-bold text-gray-900">
+                ${assetData.equity.toFixed(2)}
+              </div>
                     <div className="text-sm text-gray-500">总资产</div>
                   </div>
                 </div>

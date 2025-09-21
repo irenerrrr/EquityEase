@@ -1182,7 +1182,7 @@ export default function PortfolioPage() {
           <div className="text-left">
             <p className="mb-4 text-sm" style={{color: '#768077'}}>
               我现在拥有 <span className="font-semibold text-gray-900">{ownedShares}</span> 股，
-              我想卖出 <input type="text" placeholder={ownedShares > 0 ? ownedShares.toString() : '0'} value={sellShares} onChange={(e) => setSellShares(e.target.value)} className="w-16 px-2 py-1 border border-gray-300 rounded text-center text-gray-700 placeholder:text-gray-400 placeholder:italic" /> 股,每股 <input type="text" placeholder={currentStock?.currentPrice?.toFixed(2) || '0.00'} value={sellPrice} onChange={(e) => setSellPrice(e.target.value)} className="w-20 px-2 py-1 border border-gray-300 rounded text-center text-gray-700 placeholder:text-gray-400 placeholder:italic" /> 元
+              我想卖出 <input type="text" placeholder={ownedShares > 0 ? ownedShares.toString() : '0'} value={sellShares} onChange={(e) => setSellShares(e.target.value)} className="w-16 px-2 py-1 border border-gray-300 rounded text-center text-gray-700 placeholder:text-gray-400 placeholder:italic" /> 股,每股 <input type="text" placeholder={currentStock?.currentPrice?.toFixed(2) || '0.00'} value={sellPrice} onChange={(e) => setSellPrice(e.target.value)} className="w-20 px-2 py-1 border border-gray-300 rounded text-center text-gray-700 placeholder:text-gray-400 placeholder:italic" /> $
             </p>
             <div className="flex justify-end">
               <button 

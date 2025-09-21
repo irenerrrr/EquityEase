@@ -36,7 +36,7 @@ export default function Sidebar() {
 
   const navigation = [
     {
-      name: '主页',
+      name: '资产总览',
       href: '/dashboard',
       icon: (
         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -45,7 +45,7 @@ export default function Sidebar() {
       ),
     },
     {
-      name: '持仓',
+      name: '持仓清单',
       href: '/portfolio',
       icon: (
         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -54,11 +54,20 @@ export default function Sidebar() {
       ),
     },
     {
-      name: '交易',
+      name: '交易记录',
       href: '/trades',
       icon: (
         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+        </svg>
+      ),
+    },
+    {
+      name: 'SP500',
+      href: '/sp500',
+      icon: (
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 17l6-6 4 4 7-7" />
         </svg>
       ),
     },
