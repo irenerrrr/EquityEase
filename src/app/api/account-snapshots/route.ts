@@ -83,6 +83,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body: UpdateSnapshotInput = await request.json()
+    console.log('[Snapshots][Server] 收到更新请求:', body)
     
     // 验证必填字段
     if (!body.account_id || !body.transaction_amount || !body.transaction_type) {
@@ -146,8 +147,13 @@ export async function POST(request: NextRequest) {
           }
         }
         
-        newCash -= body.transaction_amount                    // 减少现金（按用户输入价格）
-        newMarketValue += (body.qty * currentMarketPrice)    // 增加市值（按当前市场价格）
+        const cashDelta = -body.transaction_amount
+        newCash += cashDelta
+        console.log('[Snapshots][Server] 买入计算(现金变动):', {
+          prev: { cash: latestSnapshot.cash, market_value: latestSnapshot.market_value, realized: latestSnapshot.realized_pnl_to_date },
+          deltas: { cashDelta },
+          inputs: { qty: body.qty, inputAmount: body.transaction_amount, currentMarketPrice }
+        })
       } else if (body.transaction_type === 'sell') {
         // 卖出：需要从 positions 表获取卖出前的持仓成本
         let positionCost = 0
@@ -184,12 +190,73 @@ export async function POST(request: NextRequest) {
         const realizedGain = body.transaction_amount - positionCost
 
         // 更新账户快照
-        newCash += body.transaction_amount                    // 增加现金（按卖出收入）
-        newMarketValue -= body.transaction_amount             // 减少市值（按用户输入价格）
-        newRealizedPnl += realizedGain                        // 增加已实现盈亏
+        const cashDelta = body.transaction_amount
+        newCash += cashDelta
+        newRealizedPnl += realizedGain
+        console.log('[Snapshots][Server] 卖出计算(现金/已实现):', {
+          prev: { cash: latestSnapshot.cash, market_value: latestSnapshot.market_value, realized: latestSnapshot.realized_pnl_to_date },
+          deltas: { cashDelta, equityDelta: cashDelta },
+          inputs: { qty: body.qty, inputAmount: body.transaction_amount, positionCost }
+        })
+      }
+
+      // 关键变更：按“卖出/买入完成后的持仓”重算总市值 = Σ(持仓数量 × 当前市价)
+      try {
+        // 1) 获取该账户的所有持仓（包含 symbol）
+        const { data: allPositions } = await supabase
+          .from('positions')
+          .select('net_qty, symbols(symbol)')
+          .eq('account_id', body.account_id)
+          .eq('UUID', user.id)
+
+        // 2) 计算交易后的剩余数量（当前 symbol 基于 pre-sell qty 调整）
+        let adjusted = (allPositions || []).map((p: any) => {
+          const symbol = p.symbols?.symbol as string | undefined
+          let qty = Number(p.net_qty) || 0
+          if (symbol && body.symbol && symbol === body.symbol && body.qty) {
+            // 注意：买入时 positions 已经包含了本次买入后的数量，不要再 +qty；
+            // 卖出时 snapshots 先于 positions 更新，这里需要扣掉本次卖出的数量。
+            if (body.transaction_type === 'sell') {
+              qty = Math.max(0, qty - body.qty)
+            }
+          }
+          return { symbol, qty }
+        }).filter(p => p.symbol && p.qty > 0)
+
+        // 若买入且 positions 尚未出现该标的（极少数失败/新建场景），用本次买入补一条
+        if (
+          body.transaction_type === 'buy' &&
+          body.symbol && body.qty &&
+          !adjusted.some(a => a.symbol === body.symbol)
+        ) {
+          adjusted.push({ symbol: body.symbol, qty: body.qty })
+        }
+
+        // 3) 批量获取当前市价
+        let recomputedMarketValue = 0
+        if (adjusted.length > 0) {
+          const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'
+          const priceResp = await fetch(`${baseUrl}/api/stocks/cache`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ symbols: adjusted.map(a => a.symbol), timeRange: '1d' })
+          })
+          if (priceResp.ok) {
+            const priceList = await priceResp.json()
+            recomputedMarketValue = adjusted.reduce((sum, a) => {
+              const row = priceList.find((r: any) => r.symbol === a.symbol)
+              const px = Number(row?.currentPrice) || 0
+              return sum + a.qty * px
+            }, 0)
+          }
+        }
+        newMarketValue = recomputedMarketValue
+      } catch (recalcErr) {
+        console.error('[Snapshots][Server] 重算市值失败，保持原值:', recalcErr)
       }
 
       newEquity = newCash + newMarketValue
+      console.log('[Snapshots][Server] 汇总结果(重算市值后):', { newCash, newMarketValue, newEquity, newRealizedPnl })
     } else {
       // 创建新的快照（假设初始现金为10000）
       const initialCash = 10000

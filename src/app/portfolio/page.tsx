@@ -423,6 +423,22 @@ export default function PortfolioPage() {
       // 计算总金额
       const totalAmount = sharesNum * priceNum
 
+      // 预估市值与现金变化（买入：现金按输入价，市值按当前市价）
+      const selected = stockData.find(s => s.symbol === selectedStock)
+      const currentMarketPricePreview = selected?.currentPrice || priceNum
+      const expectedCashDelta = -totalAmount
+      const expectedMarketValueDelta = sharesNum * currentMarketPricePreview
+      console.log('[Buy][Client] 提交前:', {
+        accountId: currentAccountId,
+        symbol: selectedStock,
+        qty: sharesNum,
+        inputPrice: priceNum,
+        currentMarketPrice: currentMarketPricePreview,
+        expectedCashDelta,
+        expectedMarketValueDelta,
+        expectedEquityDelta: expectedCashDelta + expectedMarketValueDelta
+      })
+
       // 获取认证token
       const { data: { session } } = await supabase.auth.getSession()
       if (!session?.access_token) {
@@ -482,6 +498,13 @@ export default function PortfolioPage() {
         // 获取当前市场价格
         const currentStock = stockData.find(stock => stock.symbol === selectedStock)
         const currentMarketPrice = currentStock?.currentPrice || priceNum
+        console.log('[Buy][Client] 快照更新参数:', {
+          accountId: currentAccountId,
+          symbol: selectedStock,
+          qty: sharesNum,
+          transaction_amount: totalAmount,
+          current_market_price: currentMarketPrice
+        })
 
         // 更新账户快照
         const snapshotResponse = await fetch('/api/account-snapshots', {
@@ -602,6 +625,19 @@ export default function PortfolioPage() {
       }
 
       const totalAmount = sharesNum * priceNum
+
+      // 预估市值与现金变化（卖出：现金与市值都按输入价）
+      const expectedCashDelta = totalAmount
+      const expectedMarketValueDelta = -totalAmount
+      console.log('[Sell][Client] 提交前:', {
+        accountId: currentAccountId,
+        symbol: selectedStock,
+        qty: sharesNum,
+        inputPrice: priceNum,
+        expectedCashDelta,
+        expectedMarketValueDelta,
+        expectedEquityDelta: expectedCashDelta + expectedMarketValueDelta
+      })
 
       // 创建卖出交易记录
       const { data: { session } } = await supabase.auth.getSession()
