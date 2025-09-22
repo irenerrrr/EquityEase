@@ -8,8 +8,7 @@ export async function POST(request: NextRequest) {
     // 使用固定ID插入symbols数据
     const symbolsToUpsert = [
       { id: 1, symbol: 'TQQQ', name: 'ProShares UltraPro QQQ' },
-      { id: 2, symbol: 'SQQQ', name: 'ProShares UltraPro Short QQQ' },
-      { id: 3, symbol: 'IXIC', name: 'NASDAQ Composite' }
+      { id: 2, symbol: 'SQQQ', name: 'ProShares UltraPro Short QQQ' }
     ]
     
     const { data: symbols, error: symbolsError } = await supabase
@@ -50,7 +49,7 @@ export async function POST(request: NextRequest) {
     
     return NextResponse.json({
       success: true,
-      message: 'Database initialized successfully with fixed IDs: TQQQ=1, SQQQ=2, IXIC=3',
+      message: 'Database initialized successfully with fixed IDs: TQQQ=1, SQQQ=2',
       symbols
     })
 

@@ -162,6 +162,7 @@ export default function DashboardPage() {
       const marketValue = snapshotData.market_value || 0
       const currentEquity = snapshotData.equity || 0  // 直接使用数据库中的equity
       const yesterdayEquity = snapshotData.yesterdayEquity || 0
+      const initialEquity = snapshotData.initialEquity
       // 复利相关字段已移除显示，仅保留现有统计
 
       // 重新计算当前市值（基于当前市场价格）- 仅用于显示持仓详情
@@ -202,13 +203,18 @@ export default function DashboardPage() {
         unrealizedPnL
       })
 
+      // 校验初始口径
+      if (!initialEquity || initialEquity <= 0) {
+        throw new Error('账户数据异常：缺少初始快照或初始净值不合法')
+      }
+
       // 计算今日盈亏（现在所有账号都有昨天的快照）
       const todayPnL = currentEquity - yesterdayEquity
       const todayPnLPercentage = yesterdayEquity > 0 ? (todayPnL / yesterdayEquity) * 100 : 0
       
-      // 累计盈亏 = 今日盈亏（因为只有昨天和今天的数据）
-      const cumulativePnL = todayPnL
-      const cumulativePnLPercentage = todayPnLPercentage
+      // 累计口径基于首日净值
+      const cumulativePnL = currentEquity - initialEquity
+      const cumulativePnLPercentage = ((currentEquity / initialEquity) - 1) * 100
 
       // 复利相关指标已移除
 
@@ -274,12 +280,27 @@ export default function DashboardPage() {
         .eq('as_of_date', yesterdayStr)
         .single()
 
+      // 获取最早的快照（用于累计口径基准）
+      const { data: earliestSnapshot } = await supabase
+        .from('account_snapshots_daily')
+        .select('equity, as_of_date')
+        .eq('account_id', accountId)
+        .eq('UUID', user.id)
+        .order('as_of_date', { ascending: true })
+        .limit(1)
+        .maybeSingle()
+
+      if (!earliestSnapshot || earliestSnapshot.equity === null || earliestSnapshot.equity === undefined) {
+        throw new Error('初始快照不存在：请检查账户初始化流程（应在建账号时生成前一日快照）')
+      }
+
       return {
         equity: latestSnapshot.equity || 0,
         market_value: latestSnapshot.market_value || 0,
         cash: latestSnapshot.cash || 0,
         yesterdayEquity: yesterdaySnapshot?.equity || 0,
-        firstDate: undefined,
+        initialEquity: earliestSnapshot.equity,
+        firstDate: earliestSnapshot.as_of_date,
         latestDate: latestSnapshot.as_of_date
       }
     } catch (error) {
@@ -561,6 +582,27 @@ export default function DashboardPage() {
               <p className={`text-xl font-semibold ${stats.realizedPnL >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                 {stats.realizedPnL >= 0 ? '+' : ''}${stats.realizedPnL.toFixed(2)}
               </p>
+              {/* 标的拆分：TQQQ / SQQQ */}
+              {(() => {
+                const realizedTQQQ = positions.find(p => p.symbol === 'TQQQ')?.realized_pnl ?? 0
+                const realizedSQQQ = positions.find(p => p.symbol === 'SQQQ')?.realized_pnl ?? 0
+                return (
+                  <div className="mt-2 space-y-1">
+                    <div className="flex justify-between text-sm">
+                      <span className="text-gray-600">TQQQ</span>
+                      <span className={`${realizedTQQQ >= 0 ? 'text-green-600' : 'text-red-600'} font-medium`}>
+                        {realizedTQQQ >= 0 ? '+' : ''}${realizedTQQQ.toFixed(2)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-gray-600">SQQQ</span>
+                      <span className={`${realizedSQQQ >= 0 ? 'text-green-600' : 'text-red-600'} font-medium`}>
+                        {realizedSQQQ >= 0 ? '+' : ''}${realizedSQQQ.toFixed(2)}
+                      </span>
+                    </div>
+                  </div>
+                )
+              })()}
             </div>
           </div>
         </div>
