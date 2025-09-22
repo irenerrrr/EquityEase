@@ -92,7 +92,7 @@ export async function GET(request: NextRequest) {
     // 统一返回绘图数据
     const { data: series, error: seriesErr } = await supabase
       .from('daily_prices')
-      .select('as_of_date, close, source')
+      .select('as_of_date, close, source, custom_index')
       .eq('symbol_id', sym.id)
       .gte('as_of_date', startDateStr)
       .lte('as_of_date', endDateStr)
@@ -104,9 +104,10 @@ export async function GET(request: NextRequest) {
 
     const labels = (series || []).map(r => r.as_of_date)
     const close = (series || []).map(r => Number(r.close) || 0)
+    const customIndex = (series || []).map(r => (r as any).custom_index ?? null)
     const dataSource = (series && series[series.length - 1]?.source) || 'yahoo_finance'
 
-    return NextResponse.json({ labels, close, dataSource, symbol: 'IXIC', startDate: startDateStr, endDate: endDateStr })
+    return NextResponse.json({ labels, close, customIndex, dataSource, symbol: 'IXIC', startDate: startDateStr, endDate: endDateStr })
   } catch (err) {
     console.error('[IXIC] GET error:', err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
@@ -114,8 +115,47 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const url = new URL(request.url)
-  return GET(new NextRequest(url))
+  try {
+    const contentType = request.headers.get('content-type') || ''
+    const hasJsonBody = contentType.includes('application/json')
+    const body = hasJsonBody ? await request.json().catch(() => ({})) : {}
+    if (body && body.action === 'updateCustomIndex' && Array.isArray(body.updates)) {
+      // 1) 找到 IXIC 的 symbol_id
+      const { data: sym, error: symErr } = await supabase
+        .from('symbols')
+        .select('id')
+        .eq('symbol', 'IXIC')
+        .single()
+      if (symErr || !sym) {
+        return NextResponse.json({ error: 'IXIC symbol not found' }, { status: 400 })
+      }
+
+      // 2) 组装 upsert 行
+      const rows = (body.updates as Array<{ date: string; value: number | null }> )
+        .filter(u => typeof u?.date === 'string' && u.date && typeof u.value === 'number' && !Number.isNaN(u.value))
+        .map(u => ({ symbol_id: sym.id, as_of_date: u.date, custom_index: u.value }))
+
+      if (rows.length === 0) {
+        return NextResponse.json({ updated: 0 })
+      }
+
+      const { error: upErr } = await supabase
+        .from('daily_prices')
+        .upsert(rows, { onConflict: 'symbol_id,as_of_date', ignoreDuplicates: false })
+      if (upErr) {
+        return NextResponse.json({ error: upErr.message }, { status: 500 })
+      }
+
+      return NextResponse.json({ updated: rows.length })
+    }
+
+    // 兼容：无 body 时与 GET 一致
+    const url = new URL(request.url)
+    return GET(new NextRequest(url))
+  } catch (err) {
+    console.error('[IXIC] POST error:', err)
+    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
+  }
 }
 
 
