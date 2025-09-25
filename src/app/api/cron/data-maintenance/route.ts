@@ -15,7 +15,7 @@ export async function GET(request: NextRequest) {
     console.log('Scheduled data maintenance started at:', new Date().toISOString())
     
     // 调用数据维护API
-    const maintenanceResponse = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/data-maintenance`, {
+    const maintenanceResponse = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'https://equityease.duckdns.org'}/api/data-maintenance`, {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',
@@ -54,7 +54,7 @@ export async function POST(request: NextRequest) {
     
     console.log(`Manual data maintenance triggered: action=${action}, symbols=${symbols.join(',')}`)
     
-    const maintenanceResponse = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/data-maintenance`, {
+    const maintenanceResponse = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'https://equityease.duckdns.org'}/api/data-maintenance`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

@@ -5,7 +5,7 @@
     node scripts/backfill-daily-prices.mjs 120 TQQQ   # backfill TQQQ for 120 days
 */
 
-const endpointBase = process.env.SITE_URL || 'http://localhost:3000'
+const endpointBase = process.env.SITE_URL || 'https://equityease.duckdns.org'
 
 async function backfill(symbols, days = 180) {
   const payload = {

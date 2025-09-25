@@ -142,7 +142,7 @@ export async function POST(request: NextRequest) {
         } else if (body.symbol && body.qty) {
           // 如果没有传递价格，尝试从API获取
           try {
-            const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'
+            const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://equityease.duckdns.org'
             const stockResponse = await fetch(`${baseUrl}/api/stocks/cache?symbol=${body.symbol}`)
             if (stockResponse.ok) {
               const stockData = await stockResponse.json()
@@ -241,7 +241,7 @@ export async function POST(request: NextRequest) {
         // 3) 批量获取当前市价
         let recomputedMarketValue = 0
         if (adjusted.length > 0) {
-          const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'
+          const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://equityease.duckdns.org'
           const priceResp = await fetch(`${baseUrl}/api/stocks/cache`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },

@@ -37,10 +37,11 @@ function AuthContent() {
     setMessage('')
 
     try {
+      const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://equityease.duckdns.org'
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
-          redirectTo: `${window.location.origin}/dashboard`
+          redirectTo: `${siteUrl}/dashboard`
         }
       })
       
