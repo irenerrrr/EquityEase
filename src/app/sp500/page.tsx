@@ -29,6 +29,11 @@ export default function SP500Page() {
   const [close, setClose] = useState<number[]>([])
   const [dataSource, setDataSource] = useState<string>('')
   const [customIndex, setCustomIndex] = useState<(number | null)[]>([])
+  // 手写离散 Y 轴刻度（低段与高段）
+  const [lowTicksInput, setLowTicksInput] = useState<string>('0,10,20,30,40')
+  const [highTicksInput, setHighTicksInput] = useState<string>('')
+  const [lowTicks, setLowTicks] = useState<number[]>([0, 10, 20, 30, 40])
+  const [highTicks, setHighTicks] = useState<number[]>([])
   const CUSTOM_BASE = 100
 
   useEffect(() => {
@@ -51,6 +56,21 @@ export default function SP500Page() {
     }
     run()
   }, [])
+
+  // 根据 IXIC 数据给“高段刻度”提供默认值（整千），仅在未手写时初始化一次
+  useEffect(() => {
+    if (labels.length === 0 || highTicks.length > 0) return
+    const ixVals = close.filter(v => typeof v === 'number') as number[]
+    if (ixVals.length === 0) return
+    const minIx = Math.min(...ixVals)
+    const maxIx = Math.max(...ixVals)
+    const upperMin = Math.floor(minIx / 1000) * 1000
+    const upperMax = Math.ceil(maxIx / 1000) * 1000
+    const arr: number[] = []
+    for (let v = upperMin; v <= upperMax; v += 1000) arr.push(v)
+    setHighTicks(arr)
+    setHighTicksInput(arr.join(','))
+  }, [labels, close, highTicks.length])
 
   if (loading) {
     return (
@@ -93,6 +113,63 @@ export default function SP500Page() {
 
   // 仅显示有 IXIC 数据的日期
   const visibleDates = allDates.filter(d => typeof ixicByDate[d] === 'number')
+
+  // 解析手写刻度
+  const parseTicks = (s: string): number[] => {
+    const nums = s
+      .split(/[,;\s]+/)
+      .map(v => Number(v))
+      .filter(v => Number.isFinite(v)) as number[]
+    const sorted = [...nums].sort((a, b) => a - b)
+    // 去重
+    const dedup: number[] = []
+    for (const v of sorted) {
+      if (dedup.length === 0 || v !== dedup[dedup.length - 1]) dedup.push(v)
+    }
+    return dedup
+  }
+
+  const handleApplyTicks = () => {
+    const low = parseTicks(lowTicksInput)
+    const high = parseTicks(highTicksInput)
+    if (low.length === 0) {
+      alert('低段刻度不能为空')
+      return
+    }
+    if (high.length === 0) {
+      alert('高段刻度不能为空')
+      return
+    }
+    if (low[low.length - 1] >= high[0]) {
+      alert('低段最大值必须小于高段最小值')
+      return
+    }
+    setLowTicks(low)
+    setHighTicks(high)
+    // 规范化输入框内容
+    setLowTicksInput(low.join(','))
+    setHighTicksInput(high.join(','))
+  }
+
+  // 离散断轴映射：将真实数值映射到等距索引域
+  const allTicks = [...lowTicks, ...highTicks]
+  const mapToDiscretePos = (y: number | null): number | null => {
+    if (y === null || y === undefined || !Number.isFinite(y)) return null
+    if (allTicks.length === 1) return 0
+    // 找到区间 [t_i, t_{i+1}]
+    let i = -1
+    for (let k = 0; k < allTicks.length - 1; k++) {
+      if (y >= allTicks[k] && y <= allTicks[k + 1]) { i = k; break }
+    }
+    if (i === -1) {
+      if (y < allTicks[0]) return 0
+      return allTicks.length - 1
+    }
+    const t0 = allTicks[i]
+    const t1 = allTicks[i + 1]
+    const r = t1 === t0 ? 0 : (y - t0) / (t1 - t0)
+    return i + Math.max(0, Math.min(1, r))
+  }
 
   // 输入状态：把 allDates 与 labels 对齐，生成可编辑数组
   const customByDate: Record<string, number | null> = Object.fromEntries(
@@ -155,69 +232,130 @@ export default function SP500Page() {
           </div>
         </div>
         {labels.length > 0 ? (
-          <div className="h-96">
-            <Line
-              data={{
-                labels,
-                datasets: [
-                  {
-                    label: '收盘价',
-                    data: close,
-                    borderColor: '#78ae78',
-                    backgroundColor: 'rgba(120, 174, 120, 0.1)',
-                    borderWidth: 3,
-                    pointRadius: 3,
-                    pointHoverRadius: 6,
-                    pointBackgroundColor: '#78ae78',
-                    pointBorderColor: '#fff',
-                    pointBorderWidth: 2,
-                    tension: 0.1,
-                    fill: true,
-                  },
-                ],
-              }}
-              options={{
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                  legend: {
-                    display: true,
-                    position: 'top',
-                    labels: { usePointStyle: true, padding: 20 },
-                  },
-                  tooltip: {
-                    mode: 'index',
-                    intersect: false,
-                    backgroundColor: 'rgba(0, 0, 0, 0.8)',
-                    titleColor: '#fff',
-                    bodyColor: '#fff',
-                    borderColor: '#78ae78',
-                    borderWidth: 1,
-                    callbacks: {
-                      label: (ctx) => `收盘价: $${Number(ctx.parsed.y).toFixed(2)}`,
-                    },
-                  },
-                },
-                interaction: { intersect: false, mode: 'index' },
-                scales: {
-                  x: {
-                    display: true,
-                    title: { display: true, text: '时间' },
-                    ticks: { maxTicksLimit: 8, maxRotation: 45, minRotation: 0 },
-                    grid: { color: 'rgba(0, 0, 0, 0.1)' },
-                  },
-                  y: {
-                    display: true,
-                    title: { display: true, text: '价格 ($)' },
-                    grid: { color: 'rgba(0, 0, 0, 0.1)' },
-                    ticks: {
-                      callback: (v) => `$${Number(v).toFixed(2)}`,
-                    },
-                  },
-                },
-              }}
-            />
+          <>
+          {/* 手写刻度输入 */}
+          <div className="mb-4 flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-gray-600">低段刻度</span>
+              <input
+                className="w-56 border border-gray-300 rounded px-2 py-1 text-sm"
+                placeholder="0,10,20,30,40"
+                value={lowTicksInput}
+                onChange={(e) => setLowTicksInput(e.target.value)}
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-gray-600">高段刻度</span>
+              <input
+                className="w-64 border border-gray-300 rounded px-2 py-1 text-sm"
+                placeholder="21000,21500,22000,22500,23000,23500"
+                value={highTicksInput}
+                onChange={(e) => setHighTicksInput(e.target.value)}
+              />
+            </div>
+            <button onClick={handleApplyTicks} className="px-3 py-1 rounded text-white text-sm" style={{ backgroundColor: '#78ae78' }}>应用刻度</button>
           </div>
+
+          <div className="h-96">
+            {(() => {
+              const customPts = visibleDates.map(d => {
+                const v = typeof customByDate[d] === 'number' ? (customByDate[d] as number) : null
+                return { x: d, y: mapToDiscretePos(v), rawY: v }
+              })
+              const ixicPts = visibleDates.map(d => {
+                const v = ixicByDate[d]
+                return { x: d, y: mapToDiscretePos(v), rawY: v }
+              })
+              const N = allTicks.length
+              const transformedTicks = Array.from({ length: N }, (_, i) => i)
+
+              return (
+                <Line
+                  data={{
+                    labels: visibleDates,
+                    datasets: [
+                      {
+                        label: '收盘价 (IXIC)',
+                        data: ixicPts,
+                        parsing: false,
+                        borderColor: '#78ae78',
+                        backgroundColor: 'rgba(120, 174, 120, 0.1)',
+                        borderWidth: 3,
+                        pointRadius: 3,
+                        pointHoverRadius: 6,
+                        pointBackgroundColor: '#78ae78',
+                        pointBorderColor: '#fff',
+                        pointBorderWidth: 2,
+                        tension: 0.1,
+                        fill: true,
+                        spanGaps: true,
+                      },
+                      {
+                        label: '自定义指数 (0-40)',
+                        data: customPts,
+                        parsing: false,
+                        borderColor: '#4a90e2',
+                        backgroundColor: 'rgba(74, 144, 226, 0.12)',
+                        borderWidth: 2,
+                        pointRadius: 2,
+                        pointHoverRadius: 5,
+                        pointBackgroundColor: '#4a90e2',
+                        pointBorderColor: '#fff',
+                        pointBorderWidth: 1,
+                        tension: 0.15,
+                        spanGaps: true,
+                      },
+                    ],
+                  }}
+                  options={{
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                      legend: { display: true, position: 'top', labels: { usePointStyle: true, padding: 20 } },
+                      tooltip: {
+                        mode: 'index',
+                        intersect: false,
+                        backgroundColor: 'rgba(0,0,0,0.8)',
+                        titleColor: '#fff',
+                        bodyColor: '#fff',
+                        borderColor: '#78ae78',
+                        borderWidth: 1,
+                        callbacks: {
+                          label: (ctx) => {
+                            const raw = (ctx.raw as any)?.rawY
+                            if (ctx.datasetIndex === 0) return `收盘价: $${Number(raw ?? ctx.parsed.y).toFixed(2)}`
+                            return `自定义指数: ${Number(raw ?? ctx.parsed.y).toFixed(2)}`
+                          },
+                        },
+                      },
+                    },
+                    interaction: { intersect: false, mode: 'index' },
+                    scales: {
+                      x: { display: true, title: { display: true, text: '时间' }, ticks: { maxTicksLimit: 8, maxRotation: 45, minRotation: 0 }, grid: { color: 'rgba(0,0,0,0.1)' } },
+                      y: {
+                        display: true,
+                        title: { display: true, text: `Y (手写刻度)` },
+                        min: 0,
+                        max: Math.max(0, allTicks.length - 1),
+                        grid: { color: 'rgba(0,0,0,0.1)' },
+                        afterBuildTicks: (scale: any) => {
+                          scale.ticks = transformedTicks.map((v) => ({ value: v }))
+                        },
+                        ticks: {
+                          stepSize: 1,
+                          callback: (v: any) => {
+                            const idx = Math.round(Number(v))
+                            return allTicks[idx] !== undefined ? `${allTicks[idx]}` : ''
+                          },
+                        },
+                      },
+                    },
+                  }}
+                />
+              )
+            })()}
+          </div>
+          </>
         ) : (
           <div className="h-96 flex items-center justify-center text-gray-500">暂无数据</div>
         )}
