@@ -1,6 +1,10 @@
 {
   "crons": [
     {
+      "path": "/api/cron/snapshot-daily",
+      "schedule": "0 8 * * *"
+    },
+    {
       "path": "/api/cron/data-maintenance",
       "schedule": "0 17 * * 1-5"
     },

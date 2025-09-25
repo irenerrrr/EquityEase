@@ -58,6 +58,11 @@ interface DashboardStats {
   unrealizedPnL: number
 }
 
+interface RealizedAgg {
+  total: number
+  bySymbol: Record<string, number>
+}
+
 export default function DashboardPage() {
   const [loading, setLoading] = useState(true)
   const [assetData, setAssetData] = useState<AssetData>({ equity: 0, market_value: 0, cash: 0 })
@@ -68,6 +73,7 @@ export default function DashboardPage() {
     totalTrades: 0,
     totalVolume: 0
   })
+  const [realizedAgg, setRealizedAgg] = useState<RealizedAgg>({ total: 0, bySymbol: {} })
   const [stats, setStats] = useState<DashboardStats>({
     totalAssets: 0,
     todayPnL: 0,
@@ -149,10 +155,11 @@ export default function DashboardPage() {
       }
 
       // 并行获取所有数据
-      const [snapshotData, positionsData, transactionData] = await Promise.all([
+      const [snapshotData, positionsData, transactionData, realizedAggData] = await Promise.all([
         fetchSnapshotData(currentAccountId),
         fetchPositionsData(currentAccountId),
-        fetchTransactionStats(currentAccountId)
+        fetchTransactionStats(currentAccountId),
+        fetchRealizedAggregate(currentAccountId)
       ])
 
       if (!snapshotData) return
@@ -168,8 +175,8 @@ export default function DashboardPage() {
       // 重新计算当前市值（基于当前市场价格）- 仅用于显示持仓详情
       const currentMarketValue = positionsData.reduce((sum, pos) => sum + (pos.current_value || 0), 0)
 
-      // 基于 positions 表计算已实现盈亏
-      const realizedPnL = positionsData.reduce((sum, pos) => sum + (pos.realized_pnl || 0), 0)
+      // 基于 交易记录 聚合已实现盈亏（包含已清仓标的）
+      const realizedPnL = realizedAggData?.total ?? 0
       
       // 计算未实现盈亏（当前市值 - 投资成本）
       const unrealizedPnL = positionsData.reduce((sum, pos) => {
@@ -227,6 +234,7 @@ export default function DashboardPage() {
 
       setPositions(positionsData)
       setTransactionStats(transactionData)
+      if (realizedAggData) setRealizedAgg({ total: realizedAggData.total, bySymbol: realizedAggData.bySymbol })
 
       setStats({
         totalAssets: currentEquity,
@@ -267,18 +275,16 @@ export default function DashboardPage() {
 
       if (!latestSnapshot) return null
 
-      // 获取昨天的快照
-      const yesterday = new Date()
-      yesterday.setDate(yesterday.getDate() - 1)
-      const yesterdayStr = yesterday.toISOString().split('T')[0]
-
-      const { data: yesterdaySnapshot } = await supabase
+      // 获取“前一可用快照”：若昨天缺失，则取今天之前最近的一天
+      const { data: prevSnapshot } = await supabase
         .from('account_snapshots_daily')
-        .select('equity')
+        .select('equity, as_of_date')
         .eq('account_id', accountId)
         .eq('UUID', user.id)
-        .eq('as_of_date', yesterdayStr)
-        .single()
+        .lt('as_of_date', latestSnapshot.as_of_date)
+        .order('as_of_date', { ascending: false })
+        .limit(1)
+        .maybeSingle()
 
       // 获取最早的快照（用于累计口径基准）
       const { data: earliestSnapshot } = await supabase
@@ -298,7 +304,7 @@ export default function DashboardPage() {
         equity: latestSnapshot.equity || 0,
         market_value: latestSnapshot.market_value || 0,
         cash: latestSnapshot.cash || 0,
-        yesterdayEquity: yesterdaySnapshot?.equity || 0,
+        yesterdayEquity: prevSnapshot?.equity || 0,
         initialEquity: earliestSnapshot.equity,
         firstDate: earliestSnapshot.as_of_date,
         latestDate: latestSnapshot.as_of_date
@@ -438,6 +444,22 @@ export default function DashboardPage() {
     } catch (error) {
       console.error('获取交易统计失败:', error)
       return { todayTrades: 0, todayVolume: 0, totalTrades: 0, totalVolume: 0 }
+    }
+  }
+
+  // 基于交易记录聚合已实现盈亏
+  const fetchRealizedAggregate = async (accountId: string): Promise<{ total: number; bySymbol: Record<string, number> } | null> => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const resp = await fetch(`/api/transactions/aggregate?account_id=${accountId}`, {
+        headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}
+      })
+      if (!resp.ok) return null
+      const data = await resp.json()
+      return { total: Number(data.realizedPnLTotal) || 0, bySymbol: data.bySymbolMap || {} }
+    } catch (e) {
+      console.error('获取交易聚合失败:', e)
+      return null
     }
   }
 
@@ -582,24 +604,23 @@ export default function DashboardPage() {
               <p className={`text-xl font-semibold ${stats.realizedPnL >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                 {stats.realizedPnL >= 0 ? '+' : ''}${stats.realizedPnL.toFixed(2)}
               </p>
-              {/* 标的拆分：TQQQ / SQQQ */}
-                {(() => {
-                const realizedTQQQ = positions.find(p => p.symbol === 'TQQQ')?.realized_pnl ?? 0
-                const realizedSQQQ = positions.find(p => p.symbol === 'SQQQ')?.realized_pnl ?? 0
+              {/* 标的拆分：基于交易聚合，展示常用标的 */}
+              {(() => {
+                const getVal = (sym: string) => Number(realizedAgg.bySymbol[sym]) || 0
+                const syms = ['TQQQ', 'SQQQ']
                 return (
                   <div className="mt-2 space-y-1">
-                    <div className="flex justify-between text-sm">
-                      <span className="text-gray-600">TQQQ</span>
-                      <span className={`${realizedTQQQ >= 0 ? 'text-green-600' : 'text-red-600'} font-medium`}>
-                        {realizedTQQQ >= 0 ? '+' : ''}${realizedTQQQ.toFixed(2)}
-                      </span>
-                    </div>
-                    <div className="flex justify-between text-sm">
-                      <span className="text-gray-600">SQQQ</span>
-                      <span className={`${realizedSQQQ >= 0 ? 'text-green-600' : 'text-red-600'} font-medium`}>
-                        {realizedSQQQ >= 0 ? '+' : ''}${realizedSQQQ.toFixed(2)}
-                      </span>
-                    </div>
+                    {syms.map((s) => {
+                      const v = getVal(s)
+                      return (
+                        <div key={s} className="flex justify-between text-sm">
+                          <span className="text-gray-600">{s}</span>
+                          <span className={`${v >= 0 ? 'text-green-600' : 'text-red-600'} font-medium`}>
+                            {v >= 0 ? '+' : ''}${v.toFixed(2)}
+                          </span>
+                        </div>
+                      )
+                    })}
                   </div>
                 )
               })()}
