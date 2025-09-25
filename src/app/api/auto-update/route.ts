@@ -88,14 +88,26 @@ async function checkDataGaps(symbolId: number, lookbackDays: number): Promise<st
 }
 
 // 从Yahoo Finance获取数据
-async function fetchYahooData(symbol: string, startDate: Date, endDate: Date, interval: string) {
+type HistoricalRow = {
+  date: Date
+  open?: number
+  high?: number
+  low?: number
+  close?: number
+  adjClose?: number
+  volume?: number
+}
+
+type HistoricalInterval = '1d'
+
+async function fetchYahooData(symbol: string, startDate: Date, endDate: Date, interval: HistoricalInterval): Promise<HistoricalRow[]> {
   try {
     console.log(`Fetching ${symbol} data: ${startDate.toISOString()} to ${endDate.toISOString()}, interval: ${interval}`)
     
     const historical = await yahooFinance.historical(symbol, {
       period1: startDate,
       period2: endDate,
-      interval: interval as any
+      interval
     })
     
     console.log(`Received ${historical.length} data points for ${symbol}`)
@@ -107,15 +119,7 @@ async function fetchYahooData(symbol: string, startDate: Date, endDate: Date, in
 }
 
 // 批量插入/更新数据到数据库
-async function upsertDailyPrices(symbolId: number, prices: Array<{
-  date: Date | string;
-  open?: number;
-  high?: number;
-  low?: number;
-  close?: number;
-  adjClose?: number;
-  volume?: number;
-}>) {
+async function upsertDailyPrices(symbolId: number, prices: Array<HistoricalRow | { date: Date | string; open?: number; high?: number; low?: number; close?: number; adjClose?: number; volume?: number }>) {
   if (!prices || prices.length === 0) {
     console.log('No prices to upsert')
     return
@@ -149,7 +153,7 @@ async function upsertDailyPrices(symbolId: number, prices: Array<{
 }
 
 // 带重试的数据获取
-async function fetchDataWithRetry(symbol: string, startDate: Date, endDate: Date, interval: string, maxRetries: number = 3): Promise<any[]> {
+async function fetchDataWithRetry(symbol: string, startDate: Date, endDate: Date, interval: HistoricalInterval, maxRetries: number = 3): Promise<HistoricalRow[]> {
   let lastError: Error | null = null
   
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
@@ -211,7 +215,7 @@ async function performDailyUpdate() {
         symbol, 
         startDate, 
         endDate, 
-        UPDATE_CONFIG.dailyUpdate.interval
+        UPDATE_CONFIG.dailyUpdate.interval as '1d'
       )
       
       // 过滤出缺失日期的数据
@@ -291,7 +295,7 @@ async function performWeeklyUpdate() {
         symbol, 
         startDate, 
         endDate, 
-        UPDATE_CONFIG.weeklyUpdate.interval
+        UPDATE_CONFIG.weeklyUpdate.interval as '1d'
       )
       
       // 过滤出缺失日期的数据

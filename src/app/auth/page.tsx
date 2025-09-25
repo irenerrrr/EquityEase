@@ -1,10 +1,10 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Suspense } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useRouter, useSearchParams } from 'next/navigation'
 
-export default function AuthPage() {
+function AuthContent() {
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState('')
   
@@ -105,5 +105,13 @@ export default function AuthPage() {
         </div>
       </div>
     </div>
+  )
+}
+
+export default function AuthPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: '#c8e4cc' }}><div className="text-gray-700">加载中...</div></div>}>
+      <AuthContent />
+    </Suspense>
   )
 }

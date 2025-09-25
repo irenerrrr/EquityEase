@@ -189,11 +189,11 @@ export default function PortfolioPage() {
             })
 
             if (stockResponse.ok) {
-              const stockData = await stockResponse.json()
+              const stockData: Array<{ symbol: string; currentPrice: number }> = await stockResponse.json()
               
               // 更新每个持仓的当前价格和市值
               portfolioItems.forEach(item => {
-                const stock = stockData.find((s: any) => s.symbol === item.stock_symbol)
+                const stock = stockData.find((s) => s.symbol === item.stock_symbol)
                 if (stock) {
                   item.current_value = item.total_quantity * stock.currentPrice
                   item.profit_loss = item.current_value - item.total_cost

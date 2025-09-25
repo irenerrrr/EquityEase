@@ -38,7 +38,7 @@ async function getTiingoData(symbol: string, startDate: string, endDate: string,
     }
     
     // 转换数据格式
-    const historicalData = data.map((item: any) => ({
+    const historicalData = data.map((item: { date: string | Date; open?: number; high?: number; low?: number; close?: number; volume?: number }) => ({
       date: new Date(item.date),
       open: item.open || 0,
       high: item.high || 0,

@@ -64,16 +64,17 @@ export async function GET(request: NextRequest) {
     if (forceRefresh || reset || !existing || existing.length === 0) {
       const period1 = new Date(startDateStr)
       const period2 = new Date(endDateStr)
-      const hist = await yahooFinance.historical('^IXIC', { period1, period2, interval: '1d' as any })
+      type HistRow = { date: Date; open?: number; high?: number; low?: number; close?: number; adjClose?: number; volume?: number }
+      const hist = await yahooFinance.historical('^IXIC', { period1, period2, interval: '1d' }) as HistRow[]
 
-      const rows = (hist || []).map(h => ({
+      const rows = (hist || []).map((h: HistRow) => ({
         symbol_id: sym.id,
         as_of_date: toYyyyMmDd(new Date(h.date)),
         open: Number(h.open) || 0,
         high: Number(h.high) || 0,
         low: Number(h.low) || 0,
         close: Number(h.close) || 0,
-        adj_close: Number((h as any).adjClose ?? h.close) || 0,
+        adj_close: Number(h.adjClose ?? h.close) || 0,
         volume: Number(h.volume) || 0,
         source: 'yahoo_finance'
       }))
@@ -104,7 +105,7 @@ export async function GET(request: NextRequest) {
 
     const labels = (series || []).map(r => r.as_of_date)
     const close = (series || []).map(r => Number(r.close) || 0)
-    const customIndex = (series || []).map(r => (r as any).custom_index ?? null)
+    const customIndex = (series || []).map((r: { custom_index?: number | null }) => (r.custom_index ?? null))
     const dataSource = (series && series[series.length - 1]?.source) || 'yahoo_finance'
 
     return NextResponse.json({ labels, close, customIndex, dataSource, symbol: 'IXIC', startDate: startDateStr, endDate: endDateStr })

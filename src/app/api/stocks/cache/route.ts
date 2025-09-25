@@ -3,9 +3,18 @@ import { supabase } from '@/lib/supabase'
 
 // 保存股票数据到缓存的辅助函数
 // options.savePriceCache = false 时，仅更新 daily_prices，不写入 price_cache
+type StockDataRow = {
+  name?: string
+  currentPrice?: number
+  open?: number
+  high?: number
+  low?: number
+  volume?: number
+}
+
 async function saveToCache(
   symbol: string,
-  stockData: any,
+  stockData: StockDataRow,
   dataSource: string,
   options?: { savePriceCache?: boolean }
 ) {

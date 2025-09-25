@@ -53,7 +53,8 @@ export async function POST(request: NextRequest) {
         const open = parseFloat(quote['02. open']) || 0
 
         // 获取历史数据
-        let historicalData = []
+        type HistoricalDatum = { date: string; close: number; volume: number }
+        let historicalData: HistoricalDatum[] = []
         try {
           const historicalUrl = `https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol=${symbol}&apikey=${API_KEY}`
           const historicalResponse = await fetch(historicalUrl)
@@ -96,8 +97,8 @@ export async function POST(request: NextRequest) {
                 return dateObj >= startDate && dateObj <= endDate
               })
               
-              historicalData = filteredDates.map(date => ({
-                date: date,
+              historicalData = filteredDates.map((date): HistoricalDatum => ({
+                date,
                 close: parseFloat(timeSeries[date]['4. close']) || 0,
                 volume: parseInt(timeSeries[date]['5. volume']) || 0
               }))

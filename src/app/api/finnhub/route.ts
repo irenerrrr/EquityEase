@@ -37,14 +37,15 @@ async function getFinnhubData(symbol: string, startDate: string, endDate: string
     }
     
     // 转换数据格式
-    const historicalData = data.t.map((timestamp: number, index: number) => ({
+    type Candle = { date: Date; open: number; high: number; low: number; close: number; volume: number }
+    const historicalData: Candle[] = data.t.map((timestamp: number, index: number): Candle => ({
       date: new Date(timestamp * 1000),
       open: data.o[index] || 0,
       high: data.h[index] || 0,
       low: data.l[index] || 0,
       close: data.c[index] || 0,
       volume: data.v[index] || 0
-    })).sort((a, b) => a.date.getTime() - b.date.getTime())
+    })).sort((a: Candle, b: Candle) => a.date.getTime() - b.date.getTime())
     
     console.log(`Finnhub returned ${historicalData.length} data points for ${symbol}`)
     return historicalData

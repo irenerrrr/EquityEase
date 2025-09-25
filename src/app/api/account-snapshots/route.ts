@@ -218,8 +218,10 @@ export async function POST(request: NextRequest) {
           .eq('UUID', user.id)
 
         // 2) 计算交易后的剩余数量（当前 symbol 基于 pre-sell qty 调整）
-        let adjusted = (allPositions || []).map((p: any) => {
-          const symbol = p.symbols?.symbol as string | undefined
+        type PositionRow = { net_qty: number | null; symbols: { symbol?: string } | null | Array<{ symbol?: string }> }
+        type AdjustedRow = { symbol: string; qty: number }
+        const adjusted: AdjustedRow[] = (allPositions || []).map((p: PositionRow) => {
+          const symbol = Array.isArray(p.symbols) ? p.symbols[0]?.symbol : p.symbols?.symbol
           let qty = Number(p.net_qty) || 0
           if (!isRefresh && symbol && body.symbol && symbol === body.symbol && body.qty) {
             // 注意：买入时 positions 已经包含了本次买入后的数量，不要再 +qty；
@@ -228,7 +230,7 @@ export async function POST(request: NextRequest) {
               qty = Math.max(0, qty - body.qty)
             }
           }
-          return { symbol, qty }
+          return { symbol: symbol || '', qty }
         }).filter(p => p.symbol && p.qty > 0)
 
         // 若买入且 positions 尚未出现该标的（极少数失败/新建场景），用本次买入补一条
@@ -246,9 +248,9 @@ export async function POST(request: NextRequest) {
             body: JSON.stringify({ symbols: adjusted.map(a => a.symbol), timeRange: '1d' })
           })
           if (priceResp.ok) {
-            const priceList = await priceResp.json()
+            const priceList: Array<{ symbol: string; currentPrice: number }> = await priceResp.json()
             recomputedMarketValue = adjusted.reduce((sum, a) => {
-              const row = priceList.find((r: any) => r.symbol === a.symbol)
+              const row = priceList.find((r) => r.symbol === a.symbol)
               const px = Number(row?.currentPrice) || 0
               return sum + a.qty * px
             }, 0)

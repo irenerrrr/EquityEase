@@ -329,7 +329,7 @@ export default function DashboardPage() {
 
       // 获取所有持仓的当前市场价格
       if (positionsData.length > 0) {
-        const symbols = positionsData.map((pos: any) => pos.symbols?.symbol).filter(Boolean)
+        const symbols = positionsData.map((pos: { symbols?: { symbol?: string } }) => pos.symbols?.symbol).filter(Boolean) as string[]
         
         try {
           const stockResponse = await fetch('/api/stocks/cache', {
@@ -342,15 +342,17 @@ export default function DashboardPage() {
           })
 
           if (stockResponse.ok) {
-            const stockData = await stockResponse.json()
+            const stockData: Array<{ symbol: string; currentPrice: number }> = await stockResponse.json()
             
             // 更新每个持仓的当前价格和市值
-            positionsData.forEach((position: any) => {
-              const stock = stockData.find((s: any) => s.symbol === position.symbols?.symbol)
+            positionsData.forEach((position: { symbols?: { symbol?: string }; net_qty?: number; invested?: number; current_value?: number; current_price?: number; unrealized_pnl?: number }) => {
+              const stock = stockData.find((s) => s.symbol === position.symbols?.symbol)
               if (stock) {
+                const netQty = Number(position.net_qty) || 0
+                const invested = Number(position.invested) || 0
                 position.current_price = stock.currentPrice
-                position.current_value = position.net_qty * stock.currentPrice
-                position.unrealized_pnl = position.current_value - position.invested
+                position.current_value = netQty * stock.currentPrice
+                position.unrealized_pnl = position.current_value - invested
               }
             })
           }
@@ -360,7 +362,7 @@ export default function DashboardPage() {
       }
 
       // 转换数据格式以匹配 PositionData 接口
-      return positionsData.map((pos: any) => {
+      return positionsData.map((pos: { symbols?: { symbol?: string; name?: string }; net_qty?: number; avg_cost?: number; invested?: number; realized_pnl?: number; current_price?: number; current_value?: number; unrealized_pnl?: number }) => {
         const symbol = pos.symbols?.symbol || ''
         let name = pos.symbols?.name || ''
         
@@ -407,26 +409,24 @@ export default function DashboardPage() {
       }
 
       const { transactions } = await response.json()
-      const allTransactions = transactions || []
+      const allTransactions: Array<{ created_at?: string; amount?: number }> = transactions || []
 
       // 计算今日交易
       const today = new Date().toISOString().split('T')[0]
-      const todayTransactions = allTransactions.filter((tx: any) => 
-        tx.created_at && tx.created_at.startsWith(today)
-      )
+      const todayTransactions = allTransactions.filter((tx) => tx.created_at && tx.created_at.startsWith(today))
 
       const todayTrades = todayTransactions.length
-      const todayVolume = todayTransactions.reduce((sum: number, tx: any) => sum + Math.abs(tx.amount || 0), 0)
+      const todayVolume = todayTransactions.reduce((sum, tx) => sum + Math.abs(tx.amount || 0), 0)
 
       const totalTrades = allTransactions.length
-      const totalVolume = allTransactions.reduce((sum: number, tx: any) => sum + Math.abs(tx.amount || 0), 0)
+      const totalVolume = allTransactions.reduce((sum, tx) => sum + Math.abs(tx.amount || 0), 0)
 
       console.log('[Dashboard] 交易统计:', {
         allTransactionsCount: allTransactions.length,
         todayTransactionsCount: todayTransactions.length,
         todayVolume,
         totalVolume,
-        sampleTransactions: allTransactions.slice(0, 3).map((tx: any) => ({
+        sampleTransactions: allTransactions.slice(0, 3).map((tx: { symbol?: string; tx_type?: string; amount?: number; created_at?: string }) => ({
           symbol: tx.symbol,
           tx_type: tx.tx_type,
           amount: tx.amount,
@@ -583,7 +583,7 @@ export default function DashboardPage() {
                 {stats.realizedPnL >= 0 ? '+' : ''}${stats.realizedPnL.toFixed(2)}
               </p>
               {/* 标的拆分：TQQQ / SQQQ */}
-              {(() => {
+                {(() => {
                 const realizedTQQQ = positions.find(p => p.symbol === 'TQQQ')?.realized_pnl ?? 0
                 const realizedSQQQ = positions.find(p => p.symbol === 'SQQQ')?.realized_pnl ?? 0
                 return (
@@ -726,7 +726,7 @@ export default function DashboardPage() {
                 <Doughnut data={chartData} options={chartOptions} />
                 {/* 中心显示总资产 */}
                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-            <div className="text-center">
+              <div className="text-center">
               <div className="text-2xl font-bold text-gray-900">
                 ${assetData.equity.toFixed(2)}
               </div>

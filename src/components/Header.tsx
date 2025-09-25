@@ -50,7 +50,7 @@ export default function Header() {
 
   // 当账号列表或当前账号变化时，更新显示名称（避免闪烁为空）
   useEffect(() => {
-    let nameFromList: string | undefined = fundAccounts.find(acc => acc.id === currentAccountId)?.name
+    const nameFromList: string | undefined = fundAccounts.find(acc => acc.id === currentAccountId)?.name
     let nameFromStorage: string | null = null
     try {
       const saved = localStorage.getItem('currentAccount')

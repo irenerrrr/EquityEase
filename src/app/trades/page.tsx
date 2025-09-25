@@ -204,7 +204,7 @@ export default function TradesPage() {
       })
       if (res.ok) {
         const arr = await res.json()
-        const row = Array.isArray(arr) ? arr.find((r: any) => r.symbol === symbol) : null
+        const row = Array.isArray(arr) ? arr.find((r: { symbol: string; chartData?: { close?: number[] }; currentPrice?: number }) => r.symbol === symbol) : null
         const closes: number[] = row?.chartData?.close || []
         const currentPrice = Number(row?.currentPrice) || (closes.length ? Number(closes[closes.length - 1]) : 0)
         const prevClose = closes.length > 1 ? Number(closes[closes.length - 2]) : currentPrice

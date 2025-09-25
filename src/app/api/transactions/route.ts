@@ -31,8 +31,8 @@ export async function GET(request: NextRequest) {
   try {
     // 尝试从 Authorization 头中获取 token（前端可以显式传入）
     const authHeader = request.headers.get('authorization')
-    let user = null as any
-    let authError = null as any
+    let user: { id: string } | null = null
+    let authError: { message?: string } | null = null
     if (authHeader && authHeader.startsWith('Bearer ')) {
       const token = authHeader.split(' ')[1]
       const resp = await supabase.auth.getUser(token)

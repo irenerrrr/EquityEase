@@ -47,7 +47,7 @@ export default function SP500Page() {
           setDataSource(json.dataSource || 'yahoo_finance')
           // 如果后端返回已有 custom_index，则预填到输入框
           if (Array.isArray(json.customIndex)) {
-            setCustomIndex(json.customIndex.map((v: any) => (v === null || v === undefined ? null : Number(v))))
+            setCustomIndex(json.customIndex.map((v: number | null) => (v === null || v === undefined ? null : Number(v))))
           }
         }
       } finally {
@@ -208,8 +208,9 @@ export default function SP500Page() {
       }
       const r = await res.json().catch(() => ({}))
       alert(`更新成功：${r.updated ?? 0} 条`)
-    } catch (e: any) {
-      alert(`更新失败: ${e?.message || e}`)
+    } catch (e) {
+      const err = e as { message?: string }
+      alert(`更新失败: ${err?.message || String(e)}`)
     }
   }
 
@@ -322,9 +323,12 @@ export default function SP500Page() {
                         borderWidth: 1,
                         callbacks: {
                           label: (ctx) => {
-                            const raw = (ctx.raw as any)?.rawY
-                            if (ctx.datasetIndex === 0) return `收盘价: $${Number(raw ?? ctx.parsed.y).toFixed(2)}`
-                            return `自定义指数: ${Number(raw ?? ctx.parsed.y).toFixed(2)}`
+                            const raw = ctx.raw as { rawY?: number } | number
+                            const rawY = typeof raw === 'object' && raw !== null ? raw.rawY : undefined
+                            const parsedY = (ctx.parsed as { y: number } | number)
+                            const yVal = typeof parsedY === 'number' ? parsedY : parsedY.y
+                            if (ctx.datasetIndex === 0) return `收盘价: $${Number(rawY ?? yVal).toFixed(2)}`
+                            return `自定义指数: ${Number(rawY ?? yVal).toFixed(2)}`
                           },
                         },
                       },
@@ -338,12 +342,12 @@ export default function SP500Page() {
                         min: 0,
                         max: Math.max(0, allTicks.length - 1),
                         grid: { color: 'rgba(0,0,0,0.1)' },
-                        afterBuildTicks: (scale: any) => {
+                        afterBuildTicks: (scale: { ticks: Array<{ value: number }> }) => {
                           scale.ticks = transformedTicks.map((v) => ({ value: v }))
                         },
                         ticks: {
                           stepSize: 1,
-                          callback: (v: any) => {
+                          callback: (v: number | string) => {
                             const idx = Math.round(Number(v))
                             return allTicks[idx] !== undefined ? `${allTicks[idx]}` : ''
                           },
