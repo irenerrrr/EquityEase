@@ -16,7 +16,7 @@ import {
   Tooltip,
   Legend,
 } from 'chart.js'
-import { Line, Bar } from 'react-chartjs-2'
+import { Line } from 'react-chartjs-2'
 
 ChartJS.register(
   CategoryScale,
@@ -59,7 +59,7 @@ interface StockData {
 
 type TimeRange = '1m' | '3m' | '6m'
 
-type ChartType = 'price' | 'volume'
+// 组合图，不再需要单独切换图类型
 
 export default function PortfolioPage() {
   const [loading, setLoading] = useState(true)
@@ -68,7 +68,7 @@ export default function PortfolioPage() {
   const [stockData, setStockData] = useState<StockData[]>([])
   const [stockLoading, setStockLoading] = useState(false)
   const [timeRange, setTimeRange] = useState<TimeRange>('6m')
-  const [chartType, setChartType] = useState<ChartType>('price')
+  // 组合图：无图表类型切换
   const [userEquity, setUserEquity] = useState<number>(0)
   const [userCash, setUserCash] = useState<number>(0)
   const [ownedShares, setOwnedShares] = useState<number>(0)
@@ -761,20 +761,34 @@ export default function PortfolioPage() {
     }
     
     try {
+      // 强制刷新：仅刷新当前选中标的，降低API压力；否则刷新两个标的
+      const symbolsToFetch = forceRefresh ? [selectedStock] : ['TQQQ', 'SQQQ']
       const response = await fetch('/api/stocks/cache', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          symbols: ['TQQQ', 'SQQQ'],
-          timeRange: timeRange
+          symbols: symbolsToFetch,
+          timeRange: timeRange,
+          forceRefresh: !!forceRefresh,
+          refreshDailyOnly: false
         })
       })
 
       if (response.ok) {
         const realStockData: StockData[] = await response.json()
-        setStockData(realStockData)
+        if (forceRefresh && Array.isArray(realStockData) && realStockData.length === 1) {
+          const incoming = realStockData[0]
+          setStockData(prev => {
+            const others = (prev || []).filter(s => s.symbol !== incoming.symbol)
+            const merged = [...others, incoming]
+            merged.sort((a, b) => (a.symbol > b.symbol ? 1 : (a.symbol < b.symbol ? -1 : 0)))
+            return merged
+          })
+        } else {
+          setStockData(realStockData)
+        }
       } else {
         console.error('Failed to fetch stock data')
         // 如果API失败，不显示任何数据
@@ -799,74 +813,34 @@ export default function PortfolioPage() {
     const currentStock = getCurrentStockData()
     if (!currentStock) return null
 
-    if (chartType === 'volume') {
-      // 成交量图表
-      return {
-        labels: currentStock.chartData.labels,
-        datasets: [
-          {
-            label: '成交量',
-            data: currentStock.chartData.volume,
-            backgroundColor: 'rgba(120, 174, 120, 0.6)',
-            borderColor: '#78ae78',
-            borderWidth: 1,
-          },
-        ],
-      }
-    } else {
-      // 价格图表 - 显示OHLC数据
-      return {
-        labels: currentStock.chartData.labels,
-        datasets: [
-          {
-            label: '开盘价',
-            data: currentStock.chartData.open,
-            borderColor: '#3b82f6',
-            backgroundColor: 'rgba(59, 130, 246, 0.1)',
-            borderWidth: 2,
-            fill: false,
-            tension: 0.1,
-            pointRadius: 2,
-            pointHoverRadius: 4,
-          },
-          {
-            label: '最高价',
-            data: currentStock.chartData.high,
-            borderColor: '#10b981',
-            backgroundColor: 'rgba(16, 185, 129, 0.1)',
-            borderWidth: 2,
-            fill: false,
-            tension: 0.1,
-            pointRadius: 2,
-            pointHoverRadius: 4,
-          },
-          {
-            label: '最低价',
-            data: currentStock.chartData.low,
-            borderColor: '#f59e0b',
-            backgroundColor: 'rgba(245, 158, 11, 0.1)',
-            borderWidth: 2,
-            fill: false,
-            tension: 0.1,
-            pointRadius: 2,
-            pointHoverRadius: 4,
-          },
-          {
-            label: '收盘价',
-            data: currentStock.chartData.close,
-            borderColor: currentStock.change >= 0 ? '#78ae78' : '#ef4444',
-            backgroundColor: currentStock.change >= 0 ? 'rgba(120, 174, 120, 0.1)' : 'rgba(239, 68, 68, 0.1)',
-            borderWidth: 3,
-            fill: true,
-            tension: 0.1,
-            pointRadius: 3,
-            pointHoverRadius: 6,
-            pointBackgroundColor: currentStock.change >= 0 ? '#78ae78' : '#ef4444',
-            pointBorderColor: '#fff',
-            pointBorderWidth: 2,
-          },
-        ],
-      }
+    // 组合图：折线(价格) + 柱(成交量)，双轴
+    return {
+      labels: currentStock.chartData.labels,
+      datasets: [
+        {
+          type: 'line' as const,
+          label: '收盘价',
+          data: currentStock.chartData.close,
+          borderColor: currentStock.change >= 0 ? '#78ae78' : '#ef4444',
+          backgroundColor: currentStock.change >= 0 ? 'rgba(120, 174, 120, 0.15)' : 'rgba(239, 68, 68, 0.15)',
+          borderWidth: 2,
+          fill: true,
+          tension: 0.2,
+          pointRadius: 0,
+          yAxisID: 'yPrice'
+        },
+        {
+          type: 'bar' as const,
+          label: '成交量',
+          data: currentStock.chartData.volume,
+          backgroundColor: 'rgba(76, 110, 245, 0.35)',
+          borderColor: 'rgba(76, 110, 245, 0.8)',
+          borderWidth: 1,
+          yAxisID: 'yVol',
+          order: 0,
+          maxBarThickness: 24
+        }
+      ]
     }
   }
 
@@ -875,7 +849,7 @@ export default function PortfolioPage() {
     maintainAspectRatio: false,
     plugins: {
       legend: {
-        display: chartType === 'price', // 价格图表显示图例，成交量图表不显示
+        display: true,
         position: 'top' as const,
         labels: {
           usePointStyle: true,
@@ -891,14 +865,11 @@ export default function PortfolioPage() {
         borderColor: '#78ae78',
         borderWidth: 1,
         callbacks: {
-          label: function(context: { dataset: { label?: string }; parsed: { y: number } }) {
+          label: function(context: { dataset: { label?: string; yAxisID?: string }; parsed: { y: number } }) {
             const label = context.dataset.label || ''
             const value = context.parsed.y
-            if (chartType === 'volume') {
-              return `${label}: ${value.toLocaleString()}`
-            } else {
-              return `${label}: $${value.toFixed(2)}`
-            }
+            if (context.dataset.yAxisID === 'yVol') return `${label}: ${value.toLocaleString()}`
+            return `${label}: $${Number(value).toFixed(2)}`
           }
         }
       },
@@ -919,26 +890,32 @@ export default function PortfolioPage() {
           color: 'rgba(0, 0, 0, 0.1)',
         }
       },
-      y: {
+      yPrice: {
+        type: 'linear' as const,
+        position: 'left' as const,
         display: true,
-        title: {
-          display: true,
-          text: chartType === 'volume' ? '成交量' : '价格 ($)'
-        },
-        grid: {
-          color: 'rgba(0, 0, 0, 0.1)',
-        },
+        title: { display: true, text: '价格 ($)' },
+        grid: { color: 'rgba(0, 0, 0, 0.1)' },
         ticks: {
           callback: function(value: string | number) {
             const numValue = typeof value === 'string' ? parseFloat(value) : value
-            if (chartType === 'volume') {
-              return numValue.toLocaleString()
-            } else {
-              return '$' + numValue.toFixed(2)
-            }
+            return '$' + Number(numValue).toFixed(2)
           }
         }
       },
+      yVol: {
+        type: 'linear' as const,
+        position: 'right' as const,
+        display: true,
+        title: { display: true, text: '成交量' },
+        grid: { display: false },
+        ticks: {
+          callback: function(value: string | number) {
+            const numValue = typeof value === 'string' ? parseFloat(value) : value
+            return Number(numValue).toLocaleString()
+          }
+        }
+      }
     },
     interaction: {
       intersect: false,
@@ -994,25 +971,6 @@ export default function PortfolioPage() {
         </div>
         
         <div className="flex items-center space-x-4">
-          {/* 图表类型选择器 */}
-          <div className="flex space-x-1 bg-gray-100 p-1 rounded-lg">
-            {[
-              { value: 'price', label: '价格' },
-              { value: 'volume', label: '成交量' }
-            ].map((type) => (
-              <button
-                key={type.value}
-                onClick={() => setChartType(type.value as ChartType)}
-                className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
-                  chartType === type.value
-                    ? 'bg-white text-gray-900 shadow-sm'
-                    : 'text-gray-600 hover:text-gray-900'
-                }`}
-              >
-                {type.label}
-              </button>
-            ))}
-          </div>
           
           {/* 时间范围选择器 */}
           <div className="flex space-x-1 bg-gray-100 p-1 rounded-lg">
@@ -1114,11 +1072,7 @@ export default function PortfolioPage() {
             {/* 图表 */}
             <div className="h-96">
               {chartData && chartData.labels && chartData.labels.length > 0 ? (
-                chartType === 'volume' ? (
-                  <Bar data={chartData} options={chartOptions} />
-                ) : (
-                  <Line data={chartData} options={chartOptions} />
-                )
+                <Line data={chartData} options={chartOptions} />
               ) : (
                 <div className="h-full flex items-center justify-center text-gray-500">
                   <div className="text-center">
