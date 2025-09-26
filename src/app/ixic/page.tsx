@@ -23,7 +23,7 @@ ChartJS.register(
   Legend
 )
 
-export default function SP500Page() {
+export default function IXICPage() {
   const [loading, setLoading] = useState(true)
   const [labels, setLabels] = useState<string[]>([])
   const [close, setClose] = useState<number[]>([])
@@ -39,6 +39,17 @@ export default function SP500Page() {
   useEffect(() => {
     const run = async () => {
       try {
+        // 1) 先后台刷新最近20天并 upsert（不改变前端展示区间）
+        try {
+          const end = new Date()
+          const start = new Date()
+          start.setDate(start.getDate() - 20)
+          const toStr = end.toISOString().split('T')[0]
+          const fromStr = start.toISOString().split('T')[0]
+          await fetch(`/api/indexes/ixic?startDate=${fromStr}&endDate=${toStr}&forceRefresh=true`)
+        } catch {}
+
+        // 2) 再按原有默认区间（自 9/1 起）获取绘图数据
         const res = await fetch('/api/indexes/ixic')
         if (res.ok) {
           const json = await res.json()
@@ -66,8 +77,21 @@ export default function SP500Page() {
     const maxIx = Math.max(...ixVals)
     const upperMin = Math.floor(minIx / 1000) * 1000
     const upperMax = Math.ceil(maxIx / 1000) * 1000
-    const arr: number[] = []
+    let arr: number[] = []
     for (let v = upperMin; v <= upperMax; v += 1000) arr.push(v)
+
+    // 在 21000 与 23000 之间添加 10 等分（步长 200，含端点）
+    const start = 21000
+    const end = 23000
+    const segments = 10
+    const step = (end - start) / segments // 200
+    for (let i = 0; i <= segments; i++) {
+      arr.push(Math.round(start + i * step))
+    }
+
+    // 去重并排序
+    arr = Array.from(new Set(arr)).sort((a, b) => a - b)
+
     setHighTicks(arr)
     setHighTicksInput(arr.join(','))
   }, [labels, close, highTicks.length])
@@ -129,27 +153,7 @@ export default function SP500Page() {
     return dedup
   }
 
-  const handleApplyTicks = () => {
-    const low = parseTicks(lowTicksInput)
-    const high = parseTicks(highTicksInput)
-    if (low.length === 0) {
-      alert('低段刻度不能为空')
-      return
-    }
-    if (high.length === 0) {
-      alert('高段刻度不能为空')
-      return
-    }
-    if (low[low.length - 1] >= high[0]) {
-      alert('低段最大值必须小于高段最小值')
-      return
-    }
-    setLowTicks(low)
-    setHighTicks(high)
-    // 规范化输入框内容
-    setLowTicksInput(low.join(','))
-    setHighTicksInput(high.join(','))
-  }
+  // 若将来需要恢复自定义输入，可以重新启用 handleApplyTicks 与输入框
 
   // 离散断轴映射：将真实数值映射到等距索引域
   const allTicks = [...lowTicks, ...highTicks]
@@ -234,29 +238,6 @@ export default function SP500Page() {
         </div>
         {labels.length > 0 ? (
           <>
-          {/* 手写刻度输入 */}
-          <div className="mb-4 flex items-center gap-4">
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-gray-600">低段刻度</span>
-              <input
-                className="w-56 border border-gray-300 rounded px-2 py-1 text-sm"
-                placeholder="0,10,20,30,40"
-                value={lowTicksInput}
-                onChange={(e) => setLowTicksInput(e.target.value)}
-              />
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-gray-600">高段刻度</span>
-              <input
-                className="w-64 border border-gray-300 rounded px-2 py-1 text-sm"
-                placeholder="21000,21500,22000,22500,23000,23500"
-                value={highTicksInput}
-                onChange={(e) => setHighTicksInput(e.target.value)}
-              />
-            </div>
-            <button onClick={handleApplyTicks} className="px-3 py-1 rounded text-white text-sm" style={{ backgroundColor: '#78ae78' }}>应用刻度</button>
-          </div>
-
           <div className="h-96">
             {(() => {
               const customPts = visibleDates.map(d => {
@@ -335,7 +316,35 @@ export default function SP500Page() {
                     },
                     interaction: { intersect: false, mode: 'index' },
                     scales: {
-                      x: { display: true, title: { display: true, text: '时间' }, ticks: { maxTicksLimit: 8, maxRotation: 45, minRotation: 0 }, grid: { color: 'rgba(0,0,0,0.1)' } },
+                      x: {
+                        display: true,
+                        title: { display: true, text: '时间' },
+                        ticks: {
+                          autoSkip: false,
+                          maxRotation: 0,
+                          minRotation: 0,
+                          callback: (value: string | number, index: number) => {
+                            const label = typeof value === 'string' ? value : visibleDates[index]
+                            // 以 UTC 判定周几，对应 daily_prices 的 as_of_date（YYYY-MM-DD）
+                            const d = new Date(`${label}T00:00:00Z`)
+                            const isFriday = d.getUTCDay() === 5
+                            if (!isFriday) return ''
+                            // 仅显示 月-日
+                            const parts = String(label).split('-')
+                            const mmdd = parts.length === 3 ? `${parts[1]}-${parts[2]}` : label
+                            return mmdd
+                          }
+                        },
+                        grid: {
+                          color: (ctx: { tick?: { value?: string | number }; index: number }) => {
+                            const raw = (ctx.tick && ctx.tick.value) as string | number | undefined
+                            const label = typeof raw === 'string' ? raw : visibleDates[ctx.index]
+                            const d = new Date(`${label}T00:00:00Z`)
+                            const isFriday = d.getUTCDay() === 5
+                            return isFriday ? 'rgba(0,0,0,0.15)' : 'rgba(0,0,0,0)'
+                          }
+                        }
+                      },
                       y: {
                         display: true,
                         title: { display: true, text: `Y (手写刻度)` },
@@ -411,5 +420,6 @@ export default function SP500Page() {
     </div>
   )
 }
+
 
 

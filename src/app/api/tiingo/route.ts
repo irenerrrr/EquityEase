@@ -30,7 +30,21 @@ async function getTiingoData(symbol: string, startDate: string, endDate: string,
     }
     
     const data = await response.json()
-    console.log(`Tiingo raw response:`, data)
+    // 仅展示尾部30条，避免日志过长
+    if (Array.isArray(data)) {
+      const tail = data.slice(-30).map((item: any) => ({
+        date: item?.date,
+        open: item?.open,
+        high: item?.high,
+        low: item?.low,
+        close: item?.close,
+        volume: item?.volume,
+        splitFactor: item?.splitFactor
+      }))
+      console.log(`Tiingo raw response (last 30 of ${data.length}):`, tail)
+    } else {
+      console.log(`Tiingo raw response:`, data)
+    }
     
     if (!Array.isArray(data) || data.length === 0) {
       console.log(`No data returned from Tiingo for ${symbol}`)
@@ -80,7 +94,15 @@ async function getTiingoQuote(symbol: string) {
     }
     
     const data = await response.json()
-    console.log(`Tiingo quote response:`, data)
+    // 仅打印关键字段，避免冗长 description 干扰日志
+    console.log(`Tiingo quote response:`, {
+      ticker: data?.ticker,
+      name: data?.name,
+      last: data?.last,
+      high: data?.high,
+      low: data?.low,
+      open: data?.open
+    })
     
     return {
       currentPrice: data.last || 0,

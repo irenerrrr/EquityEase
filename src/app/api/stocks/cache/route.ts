@@ -36,19 +36,34 @@ async function saveToCache(
     }
 
     if (symbolData) {
-      const now = new Date().toISOString()
-      const today = new Date().toISOString().split('T')[0]
+      const nowDate = new Date()
+      const now = nowDate.toISOString()
+      // 使用美东时间判断交易日与当日日期（美股口径）
+      const etDateStr = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/New_York',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+      }).format(nowDate) // YYYY-MM-DD
+      const etWeekday = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'America/New_York',
+        weekday: 'short'
+      }).format(nowDate) // Mon/Tue/.../Sat/Sun
+      const today = etDateStr
+      // 仅在交易日写入：跳过美东周末
+      const isWeekend = etWeekday === 'Sat' || etWeekday === 'Sun'
+      const hasVolume = Number(stockData.volume ?? 0) > 0
       
       // 检查 daily_prices 表今天是否已有数据
       const { data: existingDaily } = await supabase
         .from('daily_prices')
-        .select('as_of_date')
+        .select('as_of_date, volume')
         .eq('symbol_id', symbolData.id)
         .eq('as_of_date', today)
         .single()
 
-      // 如果 daily_prices 今天没有数据，保存完整日度数据
-      if (!existingDaily) {
+      // 如果是交易日且今天没有数据，则保存完整日度数据
+      if (!existingDaily && !isWeekend && hasVolume) {
         const dailyData = {
           symbol_id: symbolData.id,
           as_of_date: today,
@@ -66,8 +81,25 @@ async function saveToCache(
           .insert(dailyData)
 
         console.log(`[Daily Prices] 保存成功: ${symbol} -> ${stockData.currentPrice} (${dataSource})`)
+      } else if (existingDaily && !isWeekend && hasVolume && Number(existingDaily.volume ?? 0) === 0) {
+        // 如果已存在但 volume 为0，且今天是交易日且本次有有效成交量，则做一次更新修正
+        const dailyUpdate = {
+          open: stockData.open || stockData.currentPrice || 0,
+          high: stockData.high || stockData.currentPrice || 0,
+          low: stockData.low || stockData.currentPrice || 0,
+          close: stockData.currentPrice || 0,
+          adj_close: stockData.currentPrice || 0,
+          volume: stockData.volume || 0,
+          source: dataSource
+        }
+        await supabase
+          .from('daily_prices')
+          .update(dailyUpdate)
+          .eq('symbol_id', symbolData.id)
+          .eq('as_of_date', today)
+        console.log(`[Daily Prices] 更新当日0成交量记录为有效数据: ${symbol} (${dataSource})`)
       } else {
-        console.log(`[Daily Prices] ${symbol} 今天已有数据，跳过保存`)
+        console.log(`[Daily Prices] 跳过保存: isWeekend=${isWeekend}, hasVolume=${hasVolume}, existing=${!!existingDaily}`)
       }
 
       if (options?.savePriceCache !== false) {
@@ -328,6 +360,49 @@ export async function POST(request: NextRequest) {
           }
         }
 
+        // 当缓存不足且不是强制刷新时，优先尝试 Yahoo（日常刷新），并直接落库最近20天
+        if (!forceRefresh) {
+          try {
+            const yResp = await fetch(`${request.nextUrl.origin}/api/stocks`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ symbols: [symbol], timeRange })
+            })
+            if (yResp.ok) {
+              const yData = await yResp.json()
+              if (Array.isArray(yData) && yData.length > 0 && yData[0]?.chartData) {
+                const stockData = yData[0]
+                // 标准化 Yahoo 返回结构为 OHLCV
+                const norm = {
+                  labels: stockData.chartData.labels || [],
+                  open: stockData.chartData.open || stockData.chartData.prices || [],
+                  high: stockData.chartData.high || stockData.chartData.prices || [],
+                  low: stockData.chartData.low || stockData.chartData.prices || [],
+                  close: stockData.chartData.close || stockData.chartData.prices || [],
+                  volume: stockData.chartData.volume || stockData.chartData.volumes || []
+                }
+                await saveToCache(symbol, stockData, 'yahoo', { savePriceCache: !refreshDailyOnly })
+                await upsertChartDataForLastDays(symbol, norm, 'yahoo', 20)
+                return {
+                  symbol: stockData.symbol,
+                  name: stockData.name,
+                  currentPrice: stockData.currentPrice,
+                  change: stockData.change,
+                  changePercent: stockData.changePercent,
+                  volume: stockData.volume,
+                  high: stockData.high,
+                  low: stockData.low,
+                  open: stockData.open,
+                  dataSource: 'yahoo',
+                  chartData: norm
+                }
+              }
+            }
+          } catch (e) {
+            console.log('[Stocks Cache] Yahoo-first refresh failed, will try Tiingo next', e)
+          }
+        }
+
         // 缓存中没有数据，调用外部API
         let dataSource = 'tiingo'
         let apiEndpoint = '/api/tiingo'
@@ -424,7 +499,74 @@ export async function POST(request: NextRequest) {
           console.log(`Yahoo Finance API also failed for ${symbol}:`, yahooError)
         }
         
-        // 如果没有数据，返回空数据
+        // 外部源失败时：回退到数据库 daily_prices
+        try {
+          let lookbackDays = 30
+          if (timeRange === '3m') lookbackDays = 90
+          else if (timeRange === '6m') lookbackDays = 180
+
+          const endDate = new Date()
+          const startDate = new Date()
+          startDate.setDate(startDate.getDate() - lookbackDays)
+          const endStr = endDate.toISOString().split('T')[0]
+          const startStr = startDate.toISOString().split('T')[0]
+
+          // 确保 symbol_id 存在
+          let sid = symbolData?.id
+          if (!sid) {
+            const { data: sidRow } = await supabase
+              .from('symbols')
+              .select('id')
+              .eq('symbol', symbol)
+              .single()
+            sid = sidRow?.id
+          }
+
+          if (sid) {
+            const { data: dailyRows } = await supabase
+              .from('daily_prices')
+              .select('open, high, low, close, volume, as_of_date, source')
+              .eq('symbol_id', sid)
+              .gte('as_of_date', startStr)
+              .lte('as_of_date', endStr)
+              .order('as_of_date', { ascending: true })
+
+            if (dailyRows && dailyRows.length > 0) {
+              const labels = dailyRows.map(r => new Date(r.as_of_date).toISOString().split('T')[0])
+              const opens = dailyRows.map(r => Number(r.open) || 0)
+              const highs = dailyRows.map(r => Number(r.high) || 0)
+              const lows = dailyRows.map(r => Number(r.low) || 0)
+              const closes = dailyRows.map(r => Number(r.close) || 0)
+              const volumes = dailyRows.map(r => Number(r.volume) || 0)
+              const latestClose = closes[closes.length - 1] || 0
+              const latestVol = volumes[volumes.length - 1] || 0
+              return {
+                symbol,
+                name: symbol === 'TQQQ' ? 'ProShares UltraPro QQQ' : 'ProShares UltraPro Short QQQ',
+                currentPrice: latestClose,
+                change: 0,
+                changePercent: 0,
+                volume: latestVol,
+                high: Math.max(...highs),
+                low: Math.min(...lows),
+                open: opens[0] || latestClose,
+                dataSource: 'daily_prices',
+                chartData: {
+                  labels,
+                  open: opens,
+                  high: highs,
+                  low: lows,
+                  close: closes,
+                  volume: volumes
+                }
+              }
+            }
+          }
+        } catch (dbFallbackErr) {
+          console.log('[Stocks Cache] DB fallback failed', dbFallbackErr)
+        }
+
+        // 如果数据库也没有，则返回空
         return {
           symbol,
           name: symbol === 'TQQQ' ? 'ProShares UltraPro QQQ' : 'ProShares UltraPro Short QQQ',

@@ -29,6 +29,47 @@ ChartJS.register(
   Legend
 )
 
+// 仅在周五绘制竖向参考线的插件
+const fridayGridPlugin = {
+  id: 'fridayGrid',
+  afterDatasetsDraw(chart: any) {
+    const { ctx, chartArea, scales } = chart
+    if (!chartArea) return
+    const xScale = scales?.x
+    const labels: string[] = chart?.data?.labels || []
+    if (!xScale || !labels || labels.length === 0) return
+
+    ctx.save()
+    ctx.strokeStyle = 'rgba(0,0,0,0.08)'
+    ctx.lineWidth = 1
+
+    for (let i = 0; i < labels.length; i++) {
+      const label = labels[i]
+      if (!label || typeof label !== 'string') continue
+      const parts = label.split('-')
+      if (parts.length !== 3) continue
+      const y = Number(parts[0])
+      const m = Number(parts[1])
+      const d = Number(parts[2])
+      if (!y || !m || !d) continue
+      const weekday = new Date(Date.UTC(y, m - 1, d)).getUTCDay() // 5=Fri
+      if (weekday === 5) {
+        const x = xScale.getPixelForValue(i)
+        if (x >= chartArea.left && x <= chartArea.right) {
+          ctx.beginPath()
+          ctx.moveTo(x + 0.5, chartArea.top)
+          ctx.lineTo(x + 0.5, chartArea.bottom)
+          ctx.stroke()
+        }
+      }
+    }
+
+    ctx.restore()
+  }
+}
+
+ChartJS.register(fridayGridPlugin as any)
+
 interface PortfolioItem {
   stock_symbol: string
   stock_name?: string
@@ -80,6 +121,7 @@ export default function PortfolioPage() {
   const [sellShares, setSellShares] = useState<string>('')
   const [sellPrice, setSellPrice] = useState<string>('')
   const [selling, setSelling] = useState<boolean>(false)
+  const [sellPercentOfEquity, setSellPercentOfEquity] = useState<string>('')
   const [alert, setAlert] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null)
   const router = useRouter()
 
@@ -91,7 +133,8 @@ export default function PortfolioPage() {
       } else {
         await fetchPortfolio()
         await fetchUserEquity()
-        await fetchStockData()
+        // 进入页面时进行20天强制刷新并落库，再渲染
+        await fetchStockData(true, true)
         await fetchOwnedShares()
         setLoading(false)
       }
@@ -313,6 +356,10 @@ export default function PortfolioPage() {
       console.error('获取持仓股数失败:', err)
       setOwnedShares(0)
     }
+  }
+
+  const handleSellPercentChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setSellPercentOfEquity(e.target.value)
   }
 
   const calculateShares = (percentage: string, price: string) => {
@@ -882,12 +929,36 @@ export default function PortfolioPage() {
           text: '时间'
         },
         ticks: {
-          maxTicksLimit: 8,
-          maxRotation: 45,
+          autoSkip: false,
+          maxRotation: 0,
           minRotation: 0,
+          callback: function(value: string | number) {
+            // 仅在周五显示；用纯日历算法（UTC）避免时区影响
+            let label = ''
+            if (typeof value === 'string') {
+              label = value
+            } else if (typeof (this as any)?.getLabelForValue === 'function') {
+              label = (this as any).getLabelForValue(value)
+            }
+            if (!label) return ''
+            const parts = label.split('-')
+            if (parts.length !== 3) return ''
+            const y = Number(parts[0])
+            const m = Number(parts[1])
+            const d = Number(parts[2])
+            if (!y || !m || !d) return ''
+            const weekday = new Date(Date.UTC(y, m - 1, d)).getUTCDay() // 0=Sun..5=Fri
+            if (weekday === 5) {
+              return `${parts[1]}/${parts[2]}`
+            }
+            return ''
+          }
         },
+        // 关闭默认的竖向网格线，由自定义插件绘制“仅周五”的竖线
         grid: {
-          color: 'rgba(0, 0, 0, 0.1)',
+          display: false,
+          drawOnChartArea: false,
+          drawTicks: true
         }
       },
       yPrice: {
@@ -1135,8 +1206,28 @@ export default function PortfolioPage() {
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
           <div className="text-left">
             <p className="mb-4 text-sm" style={{color: '#768077'}}>
-              我现在拥有 <span className="font-semibold text-gray-900">{ownedShares}</span> 股，
-              我想卖出 <input type="text" placeholder={ownedShares > 0 ? ownedShares.toString() : '0'} value={sellShares} onChange={(e) => setSellShares(e.target.value)} className="w-16 px-2 py-1 border border-gray-300 rounded text-center text-gray-700 placeholder:text-gray-400 placeholder:italic" /> 股,每股 <input type="text" placeholder={currentStock?.currentPrice?.toFixed(2) || '0.00'} value={sellPrice} onChange={(e) => setSellPrice(e.target.value)} className="w-20 px-2 py-1 border border-gray-300 rounded text-center text-gray-700 placeholder:text-gray-400 placeholder:italic" /> $
+              {(() => {
+                const price = Number(currentStock?.currentPrice || 0)
+                const equity = Number(userEquity || 0)
+                const holdingValue = Math.max(0, ownedShares) * Math.max(0, price)
+                const holdingPct = equity > 0 ? (holdingValue / equity) * 100 : 0
+                const sellPct = Math.max(0, Math.min(100, Number(sellPercentOfEquity || 0)))
+                const suggestedSellValue = equity > 0 ? (equity * sellPct) / 100 : 0
+                const suggestedRaw = price > 0 ? suggestedSellValue / price : 0
+                const suggestedShares = Math.max(0, Math.min(ownedShares, Math.floor(suggestedRaw)))
+
+                return (
+                  <>
+                    我现在拥有 <span className="font-semibold text-gray-900">{ownedShares}</span> 股，
+                    占总资产的 <span className="font-semibold text-gray-900">{holdingPct.toFixed(2)}%</span>；
+                    我想卖出总资产的 <input type="text" placeholder="10" value={sellPercentOfEquity} onChange={handleSellPercentChange} className="w-16 mx-1 px-2 py-1 border border-gray-300 rounded text-center text-gray-700 placeholder:text-gray-400 placeholder:italic" /> %，
+                    也就是 <span className="font-semibold text-gray-900">{suggestedShares}</span> 股，
+                    每股 <input type="text" placeholder={currentStock?.currentPrice?.toFixed(2) || '0.00'} value={sellPrice} onChange={(e) => setSellPrice(e.target.value)} className="w-20 mx-1 px-2 py-1 border border-gray-300 rounded text-center text-gray-700 placeholder:text-gray-400 placeholder:italic" /> $
+                    <br/>
+                    如果你要按股数卖出：我想卖出 <input type="text" placeholder={ownedShares > 0 ? ownedShares.toString() : '0'} value={sellShares} onChange={(e) => setSellShares(e.target.value)} className="w-16 mx-1 px-2 py-1 border border-gray-300 rounded text-center text-gray-700 placeholder:text-gray-400 placeholder:italic" /> 股
+                  </>
+                )
+              })()}
             </p>
             <div className="flex justify-end">
               <button 

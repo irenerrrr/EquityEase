@@ -139,7 +139,7 @@ export default function DashboardPage() {
       }
       if (!currentAccountId) return
 
-      // 首页打开时，先触发一次快照刷新，重算市值并更新 daily_return/cum_factor
+      // 首页打开时，仅触发一次快照刷新（今日），重算市值并更新 daily_return/cum_factor
       try {
         const { data: { session } } = await supabase.auth.getSession()
         await fetch('/api/account-snapshots', {
@@ -417,9 +417,19 @@ export default function DashboardPage() {
       const { transactions } = await response.json()
       const allTransactions: Array<{ created_at?: string; amount?: number }> = transactions || []
 
-      // 计算今日交易
-      const today = new Date().toISOString().split('T')[0]
-      const todayTransactions = allTransactions.filter((tx) => tx.created_at && tx.created_at.startsWith(today))
+      // 计算「今日交易」（按美西时区 America/Los_Angeles）
+      const pacificFormatter = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/Los_Angeles', // 固定美西口径
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      })
+      const todayPacific = pacificFormatter.format(new Date()) // YYYY-MM-DD
+      const todayTransactions = allTransactions.filter((tx) => {
+        if (!tx.created_at) return false
+        const txDatePacific = pacificFormatter.format(new Date(tx.created_at))
+        return txDatePacific === todayPacific
+      })
 
       const todayTrades = todayTransactions.length
       const todayVolume = todayTransactions.reduce((sum, tx) => sum + Math.abs(tx.amount || 0), 0)

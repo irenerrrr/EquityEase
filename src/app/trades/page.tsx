@@ -129,8 +129,14 @@ export default function TradesPage() {
     let invested = 0
     let avgCost = 0
     let realizedPnL = 0
-    let realizedToday = 0
-    const todayStr = new Date().toISOString().split('T')[0]
+  let realizedToday = 0
+  const pacificFormatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Los_Angeles',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  })
+  const todayPacific = pacificFormatter.format(new Date())
 
     for (const tx of txs) {
       const qty = Number(tx.qty) || 0
@@ -144,7 +150,7 @@ export default function TradesPage() {
         const costOut = avgCost * qty
         const gain = (price - avgCost) * qty
         realizedPnL += gain
-        if (tx.created_at && tx.created_at.startsWith(todayStr)) {
+        if (tx.created_at && pacificFormatter.format(new Date(tx.created_at)) === todayPacific) {
           realizedToday += gain
         }
         invested = Math.max(0, invested - costOut)
@@ -156,21 +162,20 @@ export default function TradesPage() {
     return { netQty, avgCost, invested, realizedPnL, realizedToday, unrealizedPnL: 0, todayPnL: 0 }
   }
 
-  const toDateStr = (iso: string) => new Date(iso).toISOString().split('T')[0]
-  const startOf = (d: Date) => new Date(new Date(d.getFullYear(), d.getMonth(), d.getDate()).toISOString())
   const computeDailyStats = (txs: Transaction[]) => {
-    const today = startOf(new Date())
-    const yesterday = new Date(today)
-    yesterday.setDate(yesterday.getDate() - 1)
-    const dayBefore = new Date(today)
-    dayBefore.setDate(dayBefore.getDate() - 2)
+    const pacificFormatter = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/Los_Angeles',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    })
 
-    const toKey = (dt: string) => toDateStr(dt)
+    const keyFromIso = (iso: string) => pacificFormatter.format(new Date(iso))
     const group = new Map<string, { trades: number; volume: number }>()
     let totalTrades = 0
     let totalVolume = 0
     for (const tx of txs) {
-      const key = toKey(tx.created_at)
+      const key = keyFromIso(tx.created_at)
       const vol = Math.abs(Number(tx.amount) || 0)
       const cur = group.get(key) || { trades: 0, volume: 0 }
       cur.trades += 1
@@ -180,18 +185,23 @@ export default function TradesPage() {
       totalVolume += vol
     }
 
-    const get = (d: Date) => {
-      const key = toDateStr(d.toISOString())
-      const g = group.get(key) || { trades: 0, volume: 0 }
-      return { trades: g.trades, volume: g.volume, date: key }
+    const todayStr = pacificFormatter.format(new Date())
+    const y = new Date(); y.setDate(y.getDate() - 1)
+    const yesterdayStr = pacificFormatter.format(y)
+    const db = new Date(); db.setDate(db.getDate() - 2)
+    const dayBeforeStr = pacificFormatter.format(db)
+
+    const get = (dateStr: string) => {
+      const g = group.get(dateStr) || { trades: 0, volume: 0 }
+      return { trades: g.trades, volume: g.volume, date: dateStr }
     }
 
     return {
       totalTrades,
       totalVolume,
-      today: get(today),
-      yesterday: get(yesterday),
-      dayBefore: get(dayBefore)
+      today: get(todayStr),
+      yesterday: get(yesterdayStr),
+      dayBefore: get(dayBeforeStr)
     }
   }
 
@@ -257,7 +267,15 @@ export default function TradesPage() {
   }
 
   // 依据日期筛选展示的记录
-  const displayed = selectedDate ? transactions.filter(tx => tx.created_at.startsWith(selectedDate)) : transactions
+  const displayed = selectedDate ? transactions.filter(tx => {
+    const key = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/Los_Angeles',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date(tx.created_at))
+    return key === selectedDate
+  }) : transactions
 
   return (
     <div className="p-6">
