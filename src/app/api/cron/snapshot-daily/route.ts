@@ -8,6 +8,17 @@ type PositionRow = {
   symbols: { symbol?: string } | null | Array<{ symbol?: string }>
 }
 
+type SnapshotRow = {
+  cash: number | null
+  realized_pnl_to_date: number | null
+}
+
+type PrevSnapshotRow = {
+  equity: number | null
+  cum_factor: number | null
+  as_of_date: string
+}
+
 function getServiceClient() {
   const SUPABASE_URL = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL
   const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY
@@ -17,21 +28,23 @@ function getServiceClient() {
   return createClient(SUPABASE_URL, SERVICE_ROLE_KEY, { auth: { persistSession: false } })
 }
 
-async function createOrRefreshSnapshotForAccount(supabase: ReturnType<typeof createClient>, accountId: number, userId: string, origin: string) {
+async function createOrRefreshSnapshotForAccount(accountId: number, userId: string, origin: string) {
+  const supabase = getServiceClient()
   const todayStr = new Date().toISOString().split('T')[0]
 
   // 获取最新快照（用于现金/已实现延续）
-  const { data: latestSnapshot } = await supabase
+  const { data: latestSnapshotRaw } = await supabase
     .from('account_snapshots_daily')
-    .select('*')
+    .select('cash, realized_pnl_to_date')
     .eq('account_id', accountId)
     .eq('UUID', userId)
     .order('as_of_date', { ascending: false })
     .limit(1)
     .maybeSingle()
+  const latestSnapshot = latestSnapshotRaw as SnapshotRow | null
 
-  let newCash = Number(latestSnapshot?.cash) || 0
-  let newRealizedPnl = Number(latestSnapshot?.realized_pnl_to_date) || 0
+  const newCash = Number(latestSnapshot?.cash) || 0
+  const newRealizedPnl = Number(latestSnapshot?.realized_pnl_to_date) || 0
 
   // 获取持仓并重算市值（基于当前价格）
   let newMarketValue = 0
@@ -70,7 +83,7 @@ async function createOrRefreshSnapshotForAccount(supabase: ReturnType<typeof cre
   const newEquity = newCash + newMarketValue
 
   // 获取前一可用快照（不强制昨天，找今天之前最近的一天）
-  const { data: prevSnap } = await supabase
+  const { data: prevSnapRaw } = await supabase
     .from('account_snapshots_daily')
     .select('equity, cum_factor, as_of_date')
     .eq('account_id', accountId)
@@ -79,6 +92,7 @@ async function createOrRefreshSnapshotForAccount(supabase: ReturnType<typeof cre
     .order('as_of_date', { ascending: false })
     .limit(1)
     .maybeSingle()
+  const prevSnap = prevSnapRaw as PrevSnapshotRow | null
 
   const prevEquity = Number(prevSnap?.equity) || 0
   const prevCum = Number(prevSnap?.cum_factor) || 1
@@ -86,21 +100,23 @@ async function createOrRefreshSnapshotForAccount(supabase: ReturnType<typeof cre
   const cumFactor = prevCum * (1 + dailyReturn)
 
   // 写入/更新今日快照
+  const upsertPayload = [
+    {
+      account_id: accountId,
+      as_of_date: todayStr,
+      equity: newEquity,
+      market_value: newMarketValue,
+      cash: newCash,
+      realized_pnl_to_date: newRealizedPnl,
+      daily_return: dailyReturn,
+      cum_factor: cumFactor,
+      UUID: userId
+    }
+  ] as const
+
   const { error: upsertError } = await supabase
     .from('account_snapshots_daily')
-    .upsert([
-      {
-        account_id: accountId,
-        as_of_date: todayStr,
-        equity: newEquity,
-        market_value: newMarketValue,
-        cash: newCash,
-        realized_pnl_to_date: newRealizedPnl,
-        daily_return: dailyReturn,
-        cum_factor: cumFactor,
-        UUID: userId
-      }
-    ], { onConflict: 'account_id,as_of_date' })
+    .upsert(upsertPayload as unknown as never[], { onConflict: 'account_id,as_of_date' })
 
   if (upsertError) {
     throw upsertError
@@ -120,8 +136,8 @@ async function handler(request: NextRequest) {
       }
     }
 
-    const supabase = getServiceClient()
     const origin = process.env.NEXT_PUBLIC_APP_URL || process.env.NEXT_PUBLIC_SITE_URL || request.nextUrl.origin
+    const supabase = getServiceClient()
 
     // 获取所有账号（包含UUID用于隔离）
     const { data: accounts, error } = await supabase
@@ -136,7 +152,7 @@ async function handler(request: NextRequest) {
     for (const acc of accounts || []) {
       if (!acc?.id || !acc?.UUID) continue
       try {
-        const r = await createOrRefreshSnapshotForAccount(supabase, Number(acc.id), acc.UUID as string, origin)
+        const r = await createOrRefreshSnapshotForAccount(Number(acc.id), acc.UUID as string, origin)
         results.push(r)
       } catch (e) {
         console.error('[snapshot-daily] failed for account', acc.id, e)

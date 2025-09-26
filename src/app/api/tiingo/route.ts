@@ -1,5 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server'
 
+type TiingoRawPrice = {
+  date: string
+  open?: number
+  high?: number
+  low?: number
+  close?: number
+  volume?: number
+  splitFactor?: number
+}
+
+type HistoricalDatum = {
+  date: Date
+  open: number
+  high: number
+  low: number
+  close: number
+  volume: number
+}
+
 // Tiingo API配置
 const TIINGO_API_KEY = process.env.TIINGO_API_KEY
 const TIINGO_BASE_URL = 'https://api.tiingo.com/tiingo/daily'
@@ -29,10 +48,10 @@ async function getTiingoData(symbol: string, startDate: string, endDate: string,
       return [] // 返回空数组而不是抛出错误
     }
     
-    const data = await response.json()
+    const data: unknown = await response.json()
     // 仅展示尾部30条，避免日志过长
     if (Array.isArray(data)) {
-      const tail = data.slice(-30).map((item: any) => ({
+      const tail = (data as TiingoRawPrice[]).slice(-30).map((item) => ({
         date: item?.date,
         open: item?.open,
         high: item?.high,
@@ -52,13 +71,14 @@ async function getTiingoData(symbol: string, startDate: string, endDate: string,
     }
     
     // 转换数据格式
-    const historicalData = data.map((item: { date: string | Date; open?: number; high?: number; low?: number; close?: number; volume?: number }) => ({
+    const raw = data as TiingoRawPrice[]
+    const historicalData: HistoricalDatum[] = raw.map((item) => ({
       date: new Date(item.date),
-      open: item.open || 0,
-      high: item.high || 0,
-      low: item.low || 0,
-      close: item.close || 0,
-      volume: item.volume || 0
+      open: item.open ?? 0,
+      high: item.high ?? 0,
+      low: item.low ?? 0,
+      close: item.close ?? 0,
+      volume: item.volume ?? 0
     })).sort((a, b) => a.date.getTime() - b.date.getTime())
     
     console.log(`Tiingo returned ${historicalData.length} data points for ${symbol}`)
@@ -93,25 +113,26 @@ async function getTiingoQuote(symbol: string) {
       }
     }
     
-    const data = await response.json()
+    const data: unknown = await response.json()
     // 仅打印关键字段，避免冗长 description 干扰日志
+    const quote = data as { ticker?: string; name?: string; last?: number; high?: number; low?: number; open?: number }
     console.log(`Tiingo quote response:`, {
-      ticker: data?.ticker,
-      name: data?.name,
-      last: data?.last,
-      high: data?.high,
-      low: data?.low,
-      open: data?.open
+      ticker: quote?.ticker,
+      name: quote?.name,
+      last: quote?.last,
+      high: quote?.high,
+      low: quote?.low,
+      open: quote?.open
     })
     
     return {
-      currentPrice: data.last || 0,
+      currentPrice: quote.last || 0,
       change: 0, // Tiingo不直接提供change，需要计算
       changePercent: 0,
       volume: 0,
-      high: data.high || 0,
-      low: data.low || 0,
-      open: data.open || 0
+      high: quote.high || 0,
+      low: quote.low || 0,
+      open: quote.open || 0
     }
     
   } catch (error) {

@@ -16,7 +16,8 @@ import {
   Tooltip,
   Legend,
 } from 'chart.js'
-import { Line } from 'react-chartjs-2'
+import { Chart as ReactChart } from 'react-chartjs-2'
+import type { Chart, ChartArea, Scale, Plugin, ChartData, ChartOptions } from 'chart.js'
 
 ChartJS.register(
   CategoryScale,
@@ -30,13 +31,16 @@ ChartJS.register(
 )
 
 // 仅在周五绘制竖向参考线的插件
-const fridayGridPlugin = {
+const fridayGridPlugin: Plugin = {
   id: 'fridayGrid',
-  afterDatasetsDraw(chart: any) {
-    const { ctx, chartArea, scales } = chart
+  afterDatasetsDraw(chart: Chart) {
+    const ctx = chart.ctx
+    const chartArea: ChartArea | undefined = chart.chartArea
+    const anyChart = chart as unknown as { scales?: { x?: Scale } }
+    const scales: { x?: Scale } = anyChart.scales || {}
     if (!chartArea) return
     const xScale = scales?.x
-    const labels: string[] = chart?.data?.labels || []
+    const labels: string[] = (chart?.data?.labels as string[]) || []
     if (!xScale || !labels || labels.length === 0) return
 
     ctx.save()
@@ -68,7 +72,7 @@ const fridayGridPlugin = {
   }
 }
 
-ChartJS.register(fridayGridPlugin as any)
+ChartJS.register(fridayGridPlugin)
 
 interface PortfolioItem {
   stock_symbol: string
@@ -856,16 +860,15 @@ export default function PortfolioPage() {
     return stockData.find(stock => stock.symbol === selectedStock)
   }
 
-  const getChartData = () => {
+  const getChartData = (): ChartData<'bar' | 'line', number[], string> | null => {
     const currentStock = getCurrentStockData()
     if (!currentStock) return null
 
-    // 组合图：折线(价格) + 柱(成交量)，双轴
-    return {
+    const data: ChartData<'bar' | 'line', number[], string> = {
       labels: currentStock.chartData.labels,
       datasets: [
         {
-          type: 'line' as const,
+          type: 'line',
           label: '收盘价',
           data: currentStock.chartData.close,
           borderColor: currentStock.change >= 0 ? '#78ae78' : '#ef4444',
@@ -877,7 +880,7 @@ export default function PortfolioPage() {
           yAxisID: 'yPrice'
         },
         {
-          type: 'bar' as const,
+          type: 'bar',
           label: '成交量',
           data: currentStock.chartData.volume,
           backgroundColor: 'rgba(76, 110, 245, 0.35)',
@@ -889,9 +892,11 @@ export default function PortfolioPage() {
         }
       ]
     }
+
+    return data
   }
 
-  const chartOptions = {
+  const chartOptions: ChartOptions<'bar' | 'line'> = {
     responsive: true,
     maintainAspectRatio: false,
     plugins: {
@@ -932,13 +937,16 @@ export default function PortfolioPage() {
           autoSkip: false,
           maxRotation: 0,
           minRotation: 0,
-          callback: function(value: string | number) {
+          callback: function(this: Scale, value: string | number) {
             // 仅在周五显示；用纯日历算法（UTC）避免时区影响
             let label = ''
             if (typeof value === 'string') {
               label = value
-            } else if (typeof (this as any)?.getLabelForValue === 'function') {
-              label = (this as any).getLabelForValue(value)
+            } else {
+              const scaleObj = this as unknown as { getLabelForValue?: (v: string | number) => string }
+              if (typeof scaleObj.getLabelForValue === 'function') {
+                label = scaleObj.getLabelForValue(value)
+              }
             }
             if (!label) return ''
             const parts = label.split('-')
@@ -1143,7 +1151,7 @@ export default function PortfolioPage() {
             {/* 图表 */}
             <div className="h-96">
               {chartData && chartData.labels && chartData.labels.length > 0 ? (
-                <Line data={chartData} options={chartOptions} />
+                <ReactChart type='bar' data={chartData} options={chartOptions} />
               ) : (
                 <div className="h-full flex items-center justify-center text-gray-500">
                   <div className="text-center">
