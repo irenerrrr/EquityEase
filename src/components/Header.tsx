@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 import { User } from '@supabase/supabase-js'
+import MobileNavDropdown from './MobileNavDropdown'
 
 interface FundAccount {
   id: string
@@ -242,10 +243,10 @@ export default function Header() {
   return (
     <header className="shadow-sm border-b sticky top-0 z-50" style={{ backgroundColor: '#c8e4cc', borderBottomColor: '#78ae78' }}>
       <div className="flex h-16">
-        {/* 左侧 Logo 区域 - 与 Sidebar 同宽 */}
-        <div className="w-64 flex items-center px-4">
+        {/* 左侧 Logo 区域 - 与 Sidebar 同宽（小屏显示下拉） */}
+        <div className="w-64 flex items-center px-4 justify-between md:justify-start">
           <svg 
-            className="w-6 h-6 mr-2" 
+            className="hidden md:block w-6 h-6 mr-2" 
             fill="none" 
             stroke="#466a4a" 
             viewBox="0 0 24 24"
@@ -253,18 +254,23 @@ export default function Header() {
           >
             <path strokeLinecap="round" strokeLinejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
           </svg>
-          <h1 className="text-xl font-bold" style={{ color: '#466a4a' }}>
+          <h1 className="hidden md:block text-xl font-bold" style={{ color: '#466a4a' }}>
             轻松看资产
           </h1>
+          {/* 小屏显示“轻松看资产”下拉，md 及以上隐藏 */}
+          <div className="md:hidden">
+            <MobileNavDropdown />
+          </div>
         </div>
 
         {/* 右侧用户信息区域 */}
         <div className="flex-1 flex justify-end items-center px-4 sm:px-6 lg:px-8">
           <div className="flex items-center space-x-4">
+            {/* 中大屏显示切换账号与退出；小屏仍显示，为了保持操作对齐 */}
             {/* 切换账号按钮 */}
             <button 
               onClick={handleSwitchAccount}
-              className="flex items-center space-x-2 px-3 py-1 text-sm text-gray-600 hover:text-white rounded-md transition-colors"
+              className="hidden md:flex items-center space-x-2 px-3 py-1 text-sm text-gray-600 hover:text-white rounded-md transition-colors"
               onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#86c262'}
               onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
             >
@@ -280,7 +286,7 @@ export default function Header() {
             </button>
 
             {/* 用户名 */}
-            <div className="flex items-center space-x-2">
+            <div className="hidden md:flex items-center space-x-2">
               {user.user_metadata?.avatar_url ? (
                 <img
                   src={user.user_metadata.avatar_url}
@@ -307,7 +313,7 @@ export default function Header() {
             <button
               onClick={handleLogout}
               disabled={loading}
-              className="inline-flex items-center px-3 py-2 border-0 shadow-sm text-sm leading-4 font-medium rounded-md text-white focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 disabled:opacity-50 transition-colors"
+              className="hidden md:inline-flex items-center px-3 py-2 border-0 shadow-sm text-sm leading-4 font-medium rounded-md text-white focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 disabled:opacity-50 transition-colors"
               style={{ backgroundColor: '#78ae78' }}
               onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#6a9d6a'}
               onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#78ae78'}

@@ -380,13 +380,13 @@ export default function IXICPage() {
         <h2 className="text-lg font-semibold text-gray-900">指数表（9/1 - 今日）</h2>
         <span className="px-2 py-1 text-xs rounded-full bg-purple-100 text-purple-800">{dataSource || 'yahoo_finance'}</span>
       </div>
-      <div className="max-h-96 overflow-y-auto">
-        <table className="min-w-full divide-y divide-gray-200">
+      <div className="max-h-96 overflow-y-auto overflow-x-auto">
+        <table className="w-full min-w-full divide-y divide-gray-200 table-fixed md:table-auto">
           <thead className="bg-gray-50">
             <tr>
-              <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">日期</th>
-              <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">IXIC 指数</th>
-              <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">自定义指数</th>
+              <th className="px-3 py-2 md:px-4 md:py-2 text-left text-xs md:text-sm font-medium text-gray-500 uppercase tracking-wider">日期</th>
+              <th className="px-3 py-2 md:px-4 md:py-2 text-right text-xs md:text-sm font-medium text-gray-500 uppercase tracking-wider">IXIC 指数</th>
+              <th className="px-3 py-2 md:px-4 md:py-2 text-right text-xs md:text-sm font-medium text-gray-500 uppercase tracking-wider">自定义指数</th>
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-gray-200">
@@ -395,11 +395,11 @@ export default function IXICPage() {
               const custom = customByDate[d]
               return (
                 <tr key={d} className={idx % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
-                  <td className="px-4 py-2 text-sm text-gray-900">{d}</td>
-                  <td className="px-4 py-2 text-sm text-gray-900 text-right">{typeof ixic === 'number' ? ixic.toFixed(2) : ''}</td>
-                  <td className="px-4 py-2 text-sm text-gray-900 text-right">
+                  <td className="px-3 py-2 md:px-4 md:py-2 text-xs md:text-sm text-gray-900 whitespace-nowrap">{d}</td>
+                  <td className="px-3 py-2 md:px-4 md:py-2 text-xs md:text-sm text-gray-900 text-right whitespace-nowrap">{typeof ixic === 'number' ? ixic.toFixed(2) : ''}</td>
+                  <td className="px-3 py-2 md:px-4 md:py-2 text-xs md:text-sm text-gray-900 text-right whitespace-nowrap">
                     <input
-                      className="w-28 border border-gray-300 rounded px-2 py-1 text-right focus:outline-none focus:ring-1 focus:ring-green-500"
+                      className="w-24 md:w-28 border border-gray-300 rounded px-2 py-1 text-right focus:outline-none focus:ring-1 focus:ring-green-500"
                       placeholder="0"
                       value={custom ?? ''}
                       onChange={(e) => onChangeCustom(d, e.target.value)}

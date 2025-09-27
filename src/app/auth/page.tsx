@@ -2,6 +2,7 @@
 
 import { useState, useEffect, Suspense } from 'react'
 import { supabase } from '@/lib/supabase'
+import { useScreen } from '@/components/ScreenProvider'
 import { useRouter, useSearchParams } from 'next/navigation'
 
 function AuthContent() {
@@ -10,6 +11,7 @@ function AuthContent() {
   
   const router = useRouter()
   const searchParams = useSearchParams()
+  const { screenTag } = useScreen()
 
   // 检查 URL 参数中的错误信息
   useEffect(() => {
@@ -37,11 +39,14 @@ function AuthContent() {
     setMessage('')
 
     try {
-      const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://equityease.duckdns.org'
+      try { sessionStorage.setItem('screen', screenTag) } catch {}
+      const siteUrl = typeof window !== 'undefined'
+        ? window.location.origin
+        : (process.env.NEXT_PUBLIC_SITE_URL || 'https://equityease.duckdns.org')
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
-          redirectTo: `${siteUrl}/dashboard`
+          redirectTo: `${siteUrl}/dashboard?screen=${screenTag}`
         }
       })
       

@@ -112,7 +112,7 @@ export default function PortfolioPage() {
   const [selectedStock, setSelectedStock] = useState<string>('TQQQ')
   const [stockData, setStockData] = useState<StockData[]>([])
   const [stockLoading, setStockLoading] = useState(false)
-  const [timeRange, setTimeRange] = useState<TimeRange>('6m')
+  const [timeRange, setTimeRange] = useState<TimeRange>('1m')
   // 组合图：无图表类型切换
   const [userEquity, setUserEquity] = useState<number>(0)
   const [userCash, setUserCash] = useState<number>(0)
@@ -137,8 +137,8 @@ export default function PortfolioPage() {
       } else {
         await fetchPortfolio()
         await fetchUserEquity()
-        // 进入页面时进行20天强制刷新并落库，再渲染
-        await fetchStockData(true, true)
+        // 首次进入：加载两个标的，确保 TQQQ / SQQQ 标签都可见
+        await fetchStockData(true)
         await fetchOwnedShares()
         setLoading(false)
       }
@@ -1079,7 +1079,7 @@ export default function PortfolioPage() {
           <button
             onClick={() => fetchStockData(true, true)}
             disabled={stockLoading}
-            className="flex items-center px-3 py-2 text-sm font-medium text-gray-600 hover:text-gray-900 disabled:opacity-50"
+            className="flex items-center px-3 py-2 ml-4 whitespace-nowrap text-sm font-medium text-gray-600 hover:text-gray-900 disabled:opacity-50"
           >
             {stockLoading ? (
               <>
@@ -1091,7 +1091,7 @@ export default function PortfolioPage() {
                 <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                 </svg>
-                刷新数据
+                刷新
               </>
             )}
           </button>

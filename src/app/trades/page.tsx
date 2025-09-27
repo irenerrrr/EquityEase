@@ -352,26 +352,26 @@ export default function TradesPage() {
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
+            <table className="w-full min-w-full divide-y divide-gray-200 table-fixed md:table-auto">
                    <thead className="bg-gray-50">
                      <tr>
-                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">股票代码</th>
-                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">交易类型</th>
-                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">数量</th>
-                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">单价</th>
-                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">总金额</th>
-                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">交易时间</th>
+                       <th className="px-3 py-2 md:px-6 md:py-3 text-left text-xs md:text-sm font-medium text-gray-500 uppercase tracking-wider">股票代码</th>
+                       <th className="px-3 py-2 md:px-6 md:py-3 text-left text-xs md:text-sm font-medium text-gray-500 uppercase tracking-wider">交易类型</th>
+                       <th className="px-3 py-2 md:px-6 md:py-3 text-left text-xs md:text-sm font-medium text-gray-500 uppercase tracking-wider">数量</th>
+                       <th className="px-3 py-2 md:px-6 md:py-3 text-left text-xs md:text-sm font-medium text-gray-500 uppercase tracking-wider">单价</th>
+                       <th className="px-3 py-2 md:px-6 md:py-3 text-left text-xs md:text-sm font-medium text-gray-500 uppercase tracking-wider">总金额</th>
+                       <th className="px-3 py-2 md:px-6 md:py-3 text-left text-xs md:text-sm font-medium text-gray-500 uppercase tracking-wider">交易时间</th>
                      </tr>
                    </thead>
                    <tbody className="bg-white divide-y divide-gray-200">
                      {displayed.map((transaction) => (
                        <tr key={transaction.id} className="hover:bg-gray-50">
-                         <td className="px-6 py-4 whitespace-nowrap">
+                         <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap">
                            <span className="inline-flex px-2 py-1 text-xs font-semibold rounded-full bg-blue-100 text-blue-800">
                              {transaction.symbol}
                            </span>
                          </td>
-                         <td className="px-6 py-4 whitespace-nowrap">
+                         <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap">
                            <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
                              transaction.tx_type === 'buy'
                                ? 'bg-green-100 text-green-800'
@@ -380,16 +380,16 @@ export default function TradesPage() {
                              {transaction.tx_type === 'buy' ? '买入' : '卖出'}
                            </span>
                          </td>
-                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                         <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-xs md:text-sm text-gray-900">
                            {transaction.qty.toLocaleString()} 股
                          </td>
-                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                         <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-xs md:text-sm text-gray-900">
                            ${transaction.price.toFixed(2)}
                          </td>
-                         <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                         <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-xs md:text-sm font-medium text-gray-900">
                            ${transaction.amount.toFixed(2)}
                          </td>
-                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                         <td className="px-3 py-2 md:px-6 md:py-4 whitespace-normal break-words leading-tight text-xs md:text-sm text-gray-500">
                            {formatDate(transaction.created_at)}
                          </td>
                        </tr>

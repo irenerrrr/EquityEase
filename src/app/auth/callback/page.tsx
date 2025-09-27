@@ -1,15 +1,18 @@
 'use client'
 
 import { useEffect } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 
 export default function AuthCallback() {
   const router = useRouter()
+  const searchParams = useSearchParams()
 
   useEffect(() => {
     const handleAuthCallback = async () => {
       try {
+        // 读取屏幕标识（用于必要时的分流或提示）
+        const screen = searchParams.get('screen') || (typeof window !== 'undefined' ? sessionStorage.getItem('screen') : null) || 'lg'
         // 处理 OAuth 回调
         const { data, error } = await supabase.auth.getSession()
         
@@ -23,8 +26,22 @@ export default function AuthCallback() {
           // 登录成功，跳转到仪表板
           router.push('/dashboard')
         } else {
-          // 没有会话，返回登录页面
-          router.push('/auth')
+          // 等待 onAuthStateChange（某些环境写入延迟）
+          const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+            if (event === 'SIGNED_IN' && session) {
+              router.push('/dashboard')
+            }
+          })
+
+          setTimeout(async () => {
+            subscription.unsubscribe()
+            const { data: re } = await supabase.auth.getSession()
+            if (re.session) {
+              router.push('/dashboard')
+            } else {
+              router.push('/auth?error=' + encodeURIComponent(screen === 'sm' ? '登录未完成，请在小屏重试' : '登录未完成，请重试'))
+            }
+          }, 4000)
         }
       } catch (error) {
         console.error('Callback handling error:', error)
@@ -33,7 +50,7 @@ export default function AuthCallback() {
     }
 
     handleAuthCallback()
-  }, [router])
+  }, [router, searchParams])
 
   return (
     <div className="min-h-screen flex items-center justify-center"
