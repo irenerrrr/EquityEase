@@ -1,19 +1,17 @@
 'use client'
 
-import { useEffect } from 'react'
+import { Suspense, useEffect } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 
-export default function AuthCallback() {
+function CallbackContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
 
   useEffect(() => {
     const handleAuthCallback = async () => {
       try {
-        // 读取屏幕标识（用于必要时的分流或提示）
         const screen = searchParams.get('screen') || (typeof window !== 'undefined' ? sessionStorage.getItem('screen') : null) || 'lg'
-        // 处理 OAuth 回调
         const { data, error } = await supabase.auth.getSession()
         
         if (error) {
@@ -23,10 +21,8 @@ export default function AuthCallback() {
         }
 
         if (data.session) {
-          // 登录成功，跳转到仪表板
           router.push('/dashboard')
         } else {
-          // 等待 onAuthStateChange（某些环境写入延迟）
           const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
             if (event === 'SIGNED_IN' && session) {
               router.push('/dashboard')
@@ -53,12 +49,19 @@ export default function AuthCallback() {
   }, [router, searchParams])
 
   return (
-    <div className="min-h-screen flex items-center justify-center"
-         style={{ backgroundColor: '#c8e4cc' }}>
+    <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: '#c8e4cc' }}>
       <div className="text-center">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mx-auto"></div>
         <p className="mt-4 text-gray-600">正在处理登录...</p>
       </div>
     </div>
+  )
+}
+
+export default function AuthCallback() {
+  return (
+    <Suspense fallback={<div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: '#c8e4cc' }}><div className="text-center"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mx-auto"></div><p className="mt-4 text-gray-600">正在处理登录...</p></div></div>}>
+      <CallbackContent />
+    </Suspense>
   )
 }
