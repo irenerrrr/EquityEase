@@ -710,30 +710,30 @@ export default function DashboardPage() {
               <tbody className="bg-white divide-y divide-gray-200">
                 {positions.map((position, index) => (
                   <tr key={index} className="hover:bg-gray-50">
-                    <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap">
-                      <div>
+                    <td className="px-3 py-3 md:px-6 md:py-4 whitespace-nowrap">
+                      <div className="leading-normal md:leading-normal space-y-0.5">
                         <div className="text-xs md:text-sm font-medium text-gray-900">{position.symbol}</div>
                         <div className="text-xs md:text-sm text-gray-500">{position.name}</div>
                       </div>
                     </td>
-                    <td className="px-3 py-2 md:px-6 md:py-4 whitespace-normal md:whitespace-nowrap text-xs md:text-sm text-gray-900">
+                    <td className="px-3 py-3 md:px-6 md:py-4 whitespace-normal md:whitespace-nowrap text-xs md:text-sm text-gray-900">
                       {position.net_qty.toLocaleString()}
                     </td>
-                    <td className="px-3 py-2 md:px-6 md:py-4 whitespace-normal md:whitespace-nowrap text-xs md:text-sm text-gray-900">
+                    <td className="px-3 py-3 md:px-6 md:py-4 whitespace-normal md:whitespace-nowrap text-xs md:text-sm text-gray-900">
                       ${position.avg_cost.toFixed(2)}
                     </td>
-                    <td className="px-3 py-2 md:px-6 md:py-4 whitespace-normal md:whitespace-nowrap text-xs md:text-sm text-gray-900">
+                    <td className="px-3 py-3 md:px-6 md:py-4 whitespace-normal md:whitespace-nowrap text-xs md:text-sm text-gray-900">
                       ${position.invested.toLocaleString()}
                     </td>
-                    <td className="px-3 py-2 md:px-6 md:py-4 whitespace-normal md:whitespace-nowrap text-xs md:text-sm text-gray-900">
+                    <td className="px-3 py-3 md:px-6 md:py-4 whitespace-normal md:whitespace-nowrap text-xs md:text-sm text-gray-900">
                       ${(position.current_value || 0).toLocaleString()}
                     </td>
-                    <td className="px-3 py-2 md:px-6 md:py-4 whitespace-normal md:whitespace-nowrap">
+                    <td className="px-3 py-3 md:px-6 md:py-4 whitespace-normal md:whitespace-nowrap">
                       <span className={`text-xs md:text-sm font-medium ${position.realized_pnl >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                         {position.realized_pnl >= 0 ? '+' : ''}${position.realized_pnl.toLocaleString()}
                       </span>
                     </td>
-                    <td className="px-3 py-2 md:px-6 md:py-4 whitespace-normal md:whitespace-nowrap">
+                    <td className="px-3 py-3 md:px-6 md:py-4 whitespace-normal md:whitespace-nowrap">
                       <span className={`text-xs md:text-sm font-medium ${(position.unrealized_pnl || 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                         {(position.unrealized_pnl || 0) >= 0 ? '+' : ''}${(position.unrealized_pnl || 0).toLocaleString()}
                       </span>
