@@ -12,9 +12,12 @@ import {
   PointElement,
   LineElement,
   BarElement,
+  BarController,
+  LineController,
   Title,
   Tooltip,
   Legend,
+  Filler,
 } from 'chart.js'
 import { Chart as ReactChart } from 'react-chartjs-2'
 import type { Chart, ChartArea, Scale, Plugin, ChartData, ChartOptions } from 'chart.js'
@@ -25,9 +28,12 @@ ChartJS.register(
   PointElement,
   LineElement,
   BarElement,
+  BarController,
+  LineController,
   Title,
   Tooltip,
-  Legend
+  Legend,
+  Filler
 )
 
 // 仅在周五绘制竖向参考线的插件
